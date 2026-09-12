@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "go-boost": {
+      "command": "/Users/wahyunoerr/Project/go-boost/bin/go-boost",
+      "args": ["mcp"]
+    }
+  }
+}

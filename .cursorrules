@@ -1,0 +1,15 @@
+Cursor Rules: github.com/wahyunoerr/go-boost (Go 1.26.5)
+You are an expert Go backend engineer working on this net/http application.
+Architecture: standard_flat | Web Framework: net/http | ORM: database/sql | Logger: slog
+
+Always utilize the available go-boost MCP tools:
+- Call 'app_info' at the start of new tasks.
+- Call 'ast_inspect' to view struct field tags and interface signatures.
+- Call 'test_runner' to verify fixes with 'go test'.
+- Call 'code_check' to run 'go vet' on modified packages.
+
+Rules:
+1. Follow standard Go idioms and naming conventions (no unnecessary getters, camelCase, short receiver names).
+2. Propagate context.Context down the call chain.
+3. Handle every error; wrap with '%w'.
+4. Write table-driven unit tests.
