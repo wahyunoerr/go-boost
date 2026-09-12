@@ -6,7 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -40,6 +42,8 @@ func main() {
 	command := os.Args[1]
 
 	switch command {
+	case "run":
+		runSupervisedApp()
 	case "mcp":
 		runMCPServer()
 	case "init", "install":
@@ -86,6 +90,7 @@ USAGE:
   go-boost <command> [flags]
 
 COMMANDS:
+  run [cmd...]     Supervise command with live error interception & instant diagnostics
   init, install    Initialize go-boost, generate AI guidelines & MCP config
   mcp              Run Model Context Protocol (MCP) server over stdio for AI agents
   status           Analyze current Go project and print stack diagnostics
@@ -104,6 +109,10 @@ COMMANDS:
   help             Show this help menu
 
 EXAMPLES:
+  # Run application with instant error diagnostics
+  $ go-boost run make run
+  $ go-boost run go run ./...
+
   # Initialize AI guidelines and MCP configs in your project
   $ go-boost init
 
@@ -695,4 +704,70 @@ func formatSARIF(vulns []security.SecurityVulnerability) string {
 
 	data, _ := json.MarshalIndent(report, "", "  ")
 	return string(data)
+}
+
+func runSupervisedApp() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to get working directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	var cmdArgs []string
+	if len(os.Args) > 2 {
+		cmdArgs = os.Args[2:]
+	} else {
+		if hasMakefileRunTarget(cwd) {
+			cmdArgs = []string{"make", "run"}
+		} else {
+			entry := detectMainEntry(cwd)
+			cmdArgs = []string{"go", "run", entry}
+		}
+	}
+
+	fmt.Printf("🚀 go-boost supervising: %s\n\n", strings.Join(cmdArgs, " "))
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	err = runner.RunSupervised(ctx, cwd, cmdArgs)
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		os.Exit(1)
+	}
+}
+
+func hasMakefileRunTarget(rootDir string) bool {
+	content, err := os.ReadFile(filepath.Join(rootDir, "Makefile"))
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(string(content), "\n")
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if strings.HasPrefix(trimmed, "run:") || strings.HasPrefix(trimmed, "run :") {
+			return true
+		}
+	}
+	return false
+}
+
+func detectMainEntry(rootDir string) string {
+	if _, err := os.Stat(filepath.Join(rootDir, "cmd")); err == nil {
+		entries, err := os.ReadDir(filepath.Join(rootDir, "cmd"))
+		if err == nil && len(entries) > 0 {
+			for _, e := range entries {
+				if e.IsDir() {
+					return "./cmd/" + e.Name()
+				}
+			}
+			return "./cmd/..."
+		}
+	}
+	if _, err := os.Stat(filepath.Join(rootDir, "main.go")); err == nil {
+		return "main.go"
+	}
+	return "./..."
 }

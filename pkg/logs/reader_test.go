@@ -42,3 +42,34 @@ main.connectRedis()
 		t.Errorf("expected error message, got empty")
 	}
 }
+
+func TestFindLastErrorFromSavedJSON(t *testing.T) {
+	tempDir := t.TempDir()
+	boostDir := filepath.Join(tempDir, ".go-boost")
+	if err := os.MkdirAll(boostDir, 0755); err != nil {
+		t.Fatalf("failed to create .go-boost dir: %v", err)
+	}
+
+	savedJSON := `{"category":"Runtime Panic","title":"Runtime Panic: Nil Pointer Dereference","message":"nil pointer dereference","file":"cmd/app/main.go","line":42,"root_cause":"nil pointer","suggested_fix":"check nil","timestamp":"2026-09-13T00:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(boostDir, "last_error.json"), []byte(savedJSON), 0644); err != nil {
+		t.Fatalf("failed to write last_error.json: %v", err)
+	}
+
+	info, err := FindLastError(tempDir)
+	if err != nil {
+		t.Fatalf("FindLastError failed: %v", err)
+	}
+
+	if info.Type != "Runtime Panic" {
+		t.Errorf("expected type 'Runtime Panic', got '%s'", info.Type)
+	}
+	if info.File != "cmd/app/main.go" {
+		t.Errorf("expected file 'cmd/app/main.go', got '%s'", info.File)
+	}
+	if info.Line != "42" {
+		t.Errorf("expected line '42', got '%s'", info.Line)
+	}
+	if info.Source != ".go-boost/last_error.json" {
+		t.Errorf("expected source '.go-boost/last_error.json', got '%s'", info.Source)
+	}
+}

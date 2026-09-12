@@ -62,6 +62,11 @@ func GenerateProjectArtifacts(rootDir string, binaryPath string) (*InitResult, e
 		_ = writeFileIfChanged(skillFile, skillContent, result)
 	}
 
+	makefilePath := filepath.Join(rootDir, "Makefile")
+	if _, err := os.Stat(makefilePath); os.IsNotExist(err) {
+		_ = writeFileIfChanged(makefilePath, GenerateMakefile(), result)
+	}
+
 	return result, nil
 }
 

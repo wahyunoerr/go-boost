@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/wahyunoerr/go-boost/pkg/astparser"
 	"github.com/wahyunoerr/go-boost/pkg/database"
 	"github.com/wahyunoerr/go-boost/pkg/detector"
+	"github.com/wahyunoerr/go-boost/pkg/diagnostics"
 	"github.com/wahyunoerr/go-boost/pkg/generator"
 	"github.com/wahyunoerr/go-boost/pkg/logs"
 	"github.com/wahyunoerr/go-boost/pkg/runner"
@@ -606,6 +609,57 @@ func RegisterAllTools(s *Server, rootDir string) {
 		data, _ := json.MarshalIndent(unused, "", "  ")
 		return &CallToolResult{
 			Content: []Content{NewTextContent(string(data))},
+		}, nil
+	})
+
+	s.RegisterTool(Tool{
+		Name:        "diagnose_run",
+		Description: "Execute a command (e.g. 'go run ./cmd/app' or 'make run') under go-boost live supervision and immediately diagnose any compile error, runtime panic, port conflict, or crash with exact source code snippets and actionable fixes.",
+		InputSchema: ToolSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"command": {
+					Type:        "string",
+					Description: "Command to execute (e.g. 'make run', 'go run main.go'). Defaults to 'make run' if Makefile has run target, or 'go run ./...'.",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*CallToolResult, error) {
+		cmdStr, _ := args["command"].(string)
+		var cmdArgs []string
+		if cmdStr != "" {
+			cmdArgs = strings.Fields(cmdStr)
+		} else {
+			makefilePath := filepath.Join(rootDir, "Makefile")
+			if content, err := os.ReadFile(makefilePath); err == nil && strings.Contains(string(content), "run:") {
+				cmdArgs = []string{"make", "run"}
+			} else {
+				cmdArgs = []string{"go", "run", "./..."}
+			}
+		}
+
+		report, err := runner.SuperviseCommand(ctx, rootDir, cmdArgs)
+		if report != nil {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			box := diagnostics.RenderDiagnosticBox(report)
+			return &CallToolResult{
+				Content: []Content{
+					NewTextContent(box),
+					NewTextContent(string(data)),
+				},
+				IsError: true,
+			}, nil
+		}
+
+		if err != nil {
+			return &CallToolResult{
+				Content: []Content{NewTextContent(fmt.Sprintf("Command failed with error: %v", err))},
+				IsError: true,
+			}, nil
+		}
+
+		return &CallToolResult{
+			Content: []Content{NewTextContent("Command executed successfully without any errors or panics.")},
 		}, nil
 	})
 }

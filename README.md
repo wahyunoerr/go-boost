@@ -22,7 +22,7 @@
 ## Table of Contents
 - [Architecture and Advantages](#architecture-and-advantages)
 - [Key Features](#key-features)
-- [20 Built-in MCP Tools](#20-built-in-mcp-tools)
+- [21 Built-in MCP Tools](#21-built-in-mcp-tools)
 - [Interactive MCP Prompts](#interactive-mcp-prompts)
 - [Dynamic MCP Resources](#dynamic-mcp-resources)
 - [How Tools Run When go-boost Is Activated](#how-tools-run-when-go-boost-is-activated)
@@ -75,13 +75,14 @@
 
 ---
 
-## 20 Built-in MCP Tools
+## 21 Built-in MCP Tools
 
-The `go-boost` MCP server exposes 20 native tools:
+The `go-boost` MCP server exposes 21 native tools:
 
 | Tool Name | Category | Description | Parameters |
 | :--- | :--- | :--- | :--- |
-| `app_info` | Stack Detection | Retrieves comprehensive project metadata: Go version, module name, framework, ORM, database engine, logger, architecture, and installed packages. | None |
+| `diagnose_run` | Diagnostics | Supervises application or make command and produces instant root-cause diagnostics with code snippets upon crash or error. | `command` (string, optional) |
+| `app_info` | Metadata | Analyzes go.mod and AST to extract complete stack metadata, frameworks, ORM, database, logger, and architecture. | None |
 | `ast_inspect` | AST & Models | Statically inspects struct declarations, field tags, interfaces, and method receivers without compiling. | `path` (string, optional) |
 | `find_implementations` | AST & Models | Discovers which structs implement a given interface by computing method sets statically. | `interface` (string, required) |
 | `deadcode_detect` | Code Quality | Statically scans for unreferenced functions, structs, and methods across the codebase. | `path` (string, optional) |
@@ -537,6 +538,35 @@ Add this block to `.zed/settings.json`:
 
 ### `go-boost init`
 Scans the project, generates MCP configurations, and writes tailored AI guidelines and skills.
+
+### `go-boost run [command...]`
+Supervises application or build execution with zero-latency streaming. Upon crash, compilation error, runtime panic, or port conflict, it immediately halts and displays an instant visual diagnostic box showing the exact file, line number, source code snippet with pointer arrow, root cause analysis, and actionable fix:
+```text
+$ go-boost run make run
+========================================================================
+🚨 GO-BOOST INSTANT DIAGNOSTIC: Runtime Panic
+========================================================================
+📍 Location : cmd/api/main.go:45
+💥 Message  : runtime error: invalid memory address or nil pointer dereference
+
+📄 Source Context:
+------------------------------------------------------------------------
+     43 |   cfg, err := config.Load()
+->   45 |   dbVersion := cfg.Database.Version
+     46 |   log.Printf("DB Version: %s", dbVersion)
+------------------------------------------------------------------------
+
+💡 Root Cause:
+   Attempted to read or write a struct field or invoke a method on a pointer that is nil.
+
+🛠️ Suggested Fix:
+   Check if the pointer variable is nil before accessing its fields or methods.
+
+📡 Saved to .go-boost/last_error.json (Synchronized with MCP)
+========================================================================
+```
+
+If run without arguments, `go-boost run` automatically detects `Makefile` with a `run:` target, or locates the application entry point in `cmd/` or `main.go`.
 
 ### `go-boost mcp`
 Runs the standard Model Context Protocol server over `stdio` (JSON-RPC 2.0).

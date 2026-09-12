@@ -103,6 +103,26 @@ func GenerateMCPConfigJSON(binaryPath string) string {
 `, binaryPath)
 }
 
+func GenerateMakefile() string {
+	return `.PHONY: run test check bench mcp
+
+run:
+	@go-boost run go run ./...
+
+test:
+	@go-boost run go test -v ./...
+
+check:
+	@go-boost check
+
+bench:
+	@go-boost bench
+
+mcp:
+	@go-boost mcp
+`
+}
+
 var BuiltinSkills = map[string]string{
 	"go-clean-architecture": `# Skill: Go Clean Architecture Pattern
 
