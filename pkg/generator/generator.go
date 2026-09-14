@@ -59,6 +59,10 @@ func GenerateProjectArtifacts(rootDir string, binaryPath string) (*InitResult, e
 		return nil, err
 	}
 
+	if err := ensureGitignored(rootDir, ".go-boost/", result); err != nil {
+		return nil, err
+	}
+
 	makefilePath := filepath.Join(rootDir, "Makefile")
 	if _, err := os.Stat(makefilePath); os.IsNotExist(err) {
 		if err := writeFileIfChanged(makefilePath, GenerateMakefile(detectMainPackage(rootDir)), result); err != nil {
@@ -247,4 +251,30 @@ func relative(rootDir, path string) string {
 		return rel
 	}
 	return path
+}
+
+func ensureGitignored(rootDir, pattern string, result *InitResult) error {
+	gitignorePath := filepath.Join(rootDir, ".gitignore")
+
+	existing, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+
+	for _, line := range strings.Split(string(existing), "\n") {
+		if strings.TrimSpace(line) == strings.TrimSuffix(pattern, "/") || strings.TrimSpace(line) == pattern {
+			return nil
+		}
+	}
+
+	content := strings.TrimRight(string(existing), "\n") + "\n\n" + pattern + "\n"
+	if err := os.WriteFile(gitignorePath, []byte(content), 0644); err != nil {
+		return err
+	}
+
+	result.UpdatedFiles = append(result.UpdatedFiles, gitignorePath)
+	return nil
 }

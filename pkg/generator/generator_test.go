@@ -209,3 +209,32 @@ func TestExistingMakefileIsNotOverwritten(t *testing.T) {
 		t.Errorf("an existing Makefile was modified:\n%s", got)
 	}
 }
+
+func TestInitKeepsCrashReportsOutOfGit(t *testing.T) {
+	dir, _ := initProject(t, map[string]string{
+		".gitignore": "bin/\n*.log\n",
+	})
+
+	content := readFile(t, filepath.Join(dir, ".gitignore"))
+	if !strings.Contains(content, ".go-boost/") {
+		t.Errorf("expected .go-boost/ to be ignored, got:\n%s", content)
+	}
+	if !strings.Contains(content, "bin/") || !strings.Contains(content, "*.log") {
+		t.Errorf("existing ignore rules were lost:\n%s", content)
+	}
+
+	if _, err := GenerateProjectArtifacts(dir, "/usr/local/bin/go-boost"); err != nil {
+		t.Fatalf("second run failed: %v", err)
+	}
+	if got := strings.Count(readFile(t, filepath.Join(dir, ".gitignore")), ".go-boost/"); got != 1 {
+		t.Errorf("expected the rule to be added once, found %d times", got)
+	}
+}
+
+func TestInitDoesNotCreateGitignoreWhereNoneExists(t *testing.T) {
+	dir, _ := initProject(t, map[string]string{})
+
+	if _, err := os.Stat(filepath.Join(dir, ".gitignore")); !os.IsNotExist(err) {
+		t.Error("go-boost should not introduce a .gitignore into a project that has none")
+	}
+}
