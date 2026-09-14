@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -22,7 +23,7 @@ import (
 )
 
 const (
-	Version = "1.2.0"
+	Version = "2.0.0"
 	Banner  = `
    ____ _       ____                  _   
   / ___/___    | __ )  ___   ___  ___| |_ 
@@ -33,54 +34,77 @@ const (
 `
 )
 
+const (
+	exitOK       = 0
+	exitError    = 1
+	exitFindings = 2
+)
+
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	if len(os.Args) < 2 {
 		printHelp()
-		os.Exit(0)
+		return exitOK
 	}
 
-	command := os.Args[1]
-
-	switch command {
+	switch os.Args[1] {
 	case "run":
-		runSupervisedApp()
+		return runSupervisedApp()
 	case "mcp":
-		runMCPServer()
+		return runMCPServer()
 	case "init", "install":
-		runInit()
+		return runInit()
 	case "status":
-		runStatus()
+		return runStatus()
 	case "routes":
-		runRoutes()
+		return runRoutes()
 	case "schema":
-		runSchema()
+		return runSchema()
 	case "inspect":
-		runInspect()
+		return runInspect()
 	case "check":
-		runCheck()
+		return runCheck()
 	case "bench":
-		runBench()
+		return runBench()
 	case "security":
-		runSecurity()
+		return runSecurity()
 	case "mock":
-		runMock()
+		return runMock()
 	case "openapi":
-		runOpenAPI()
+		return runOpenAPI()
 	case "migrate":
-		runMigrate()
+		return runMigrate()
 	case "deadcode":
-		runDeadCode()
+		return runDeadCode()
 	case "update":
-		runUpdate()
+		return runInit()
 	case "version", "-v", "--version":
 		fmt.Printf("go-boost v%s\n", Version)
+		return exitOK
 	case "help", "-h", "--help":
 		printHelp()
+		return exitOK
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", command)
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", os.Args[1])
 		printHelp()
-		os.Exit(1)
+		return exitError
 	}
+}
+
+func fail(format string, args ...any) int {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	return exitError
+}
+
+func workingDir() (string, int) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fail("failed to get current working directory: %v", err)
+	}
+	return cwd, exitOK
 }
 
 func printHelp() {
@@ -130,15 +154,15 @@ EXAMPLES:
 `)
 }
 
-func runMCPServer() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to get current working directory: %v\n", err)
-		os.Exit(1)
+func runMCPServer() int {
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
 	srv := mcp.NewServer("go-boost", Version,
-		mcp.WithInstructions("go-boost provides 20 native MCP tools, prompts, and dynamic resources to accelerate Go development, static AST inspection, database schema exploration, and runtime diagnostics."),
+		mcp.WithInstructions("go-boost provides native MCP tools, prompts, and dynamic resources to accelerate Go development, static AST inspection, database schema exploration, and runtime diagnostics."),
+		mcp.WithCompletionSource(mcp.NewCompletionSource(cwd)),
 	)
 
 	mcp.RegisterAllTools(srv, cwd)
@@ -151,21 +175,20 @@ func runMCPServer() {
 	if err := srv.Serve(ctx); err != nil {
 		srv.Log("Server terminated: %v", err)
 	}
+	return exitOK
 }
 
-func runInit() {
+func runInit() int {
 	fmt.Print(Banner)
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
 	d := detector.NewDetector(cwd)
 	stack, err := d.Detect()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error detecting stack: %v\n", err)
-		os.Exit(1)
+		return fail("Error detecting stack: %v", err)
 	}
 
 	fmt.Printf("🔍 Detected Go Module : %s\n", stack.ModuleName)
@@ -184,13 +207,29 @@ func runInit() {
 
 	res, err := generator.GenerateProjectArtifacts(cwd, binaryName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error generating artifacts: %v\n", err)
-		os.Exit(1)
+		return fail("Error generating artifacts: %v", err)
 	}
 
-	fmt.Println("✨ Successfully generated AI guidelines, skills, and MCP configurations:")
-	for _, f := range res.GeneratedFiles {
-		fmt.Printf("   ✅ %s\n", f)
+	if len(res.GeneratedFiles) > 0 {
+		fmt.Println("✨ Created:")
+		for _, f := range res.GeneratedFiles {
+			fmt.Printf("   ✅ %s\n", f)
+		}
+	}
+	if len(res.UpdatedFiles) > 0 {
+		fmt.Println("♻️  Updated (your own content was kept):")
+		for _, f := range res.UpdatedFiles {
+			fmt.Printf("   ✅ %s\n", f)
+		}
+	}
+	if len(res.SkippedFiles) > 0 {
+		fmt.Println("⏭️  Left untouched:")
+		for _, f := range res.SkippedFiles {
+			fmt.Printf("   •  %s\n", f)
+		}
+	}
+	if len(res.InstalledSkill) > 0 {
+		fmt.Printf("🧠 Skills installed into .claude/skills: %s\n", strings.Join(res.InstalledSkill, ", "))
 	}
 
 	fmt.Println("\n🤖 Next Steps for AI Coding Assistants:")
@@ -199,13 +238,13 @@ func runInit() {
 	fmt.Println("  - Antigravity    : In chat, run MCP tool 'app_info' to connect.")
 	fmt.Println("  - VS Code Copilot: Reload window; .vscode/mcp.json is configured.")
 	fmt.Println("\n🚀 Run 'go-boost status' anytime to inspect project health.")
+	return exitOK
 }
 
-func runStatus() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+func runStatus() int {
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
@@ -215,8 +254,7 @@ func runStatus() {
 	d := detector.NewDetector(cwd)
 	stack, err := d.Detect()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error detecting stack: %v\n", err)
-		os.Exit(1)
+		return fail("Error detecting stack: %v", err)
 	}
 
 	conns, _ := database.DiscoverConnections(cwd)
@@ -230,7 +268,7 @@ func runStatus() {
 		}
 		data, _ := json.MarshalIndent(out, "", "  ")
 		fmt.Println(string(data))
-		return
+		return exitOK
 	}
 
 	fmt.Println("================================================================")
@@ -249,13 +287,13 @@ func runStatus() {
 		fmt.Printf("  DB Connections  : %d connection(s) found\n", len(conns.Connections))
 	}
 	fmt.Println("================================================================")
+	return exitOK
 }
 
-func runRoutes() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+func runRoutes() int {
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
 	fs := flag.NewFlagSet("routes", flag.ExitOnError)
@@ -264,19 +302,18 @@ func runRoutes() {
 
 	routes, err := astparser.ScanRoutes(cwd)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error scanning routes: %v\n", err)
-		os.Exit(1)
+		return fail("Error scanning routes: %v", err)
 	}
 
 	if *formatFlag == "json" {
 		data, _ := json.MarshalIndent(routes, "", "  ")
 		fmt.Println(string(data))
-		return
+		return exitOK
 	}
 
 	if len(routes) == 0 {
 		fmt.Println("No HTTP routes detected in current directory.")
-		return
+		return exitOK
 	}
 
 	fmt.Printf("Found %d HTTP route(s):\n\n", len(routes))
@@ -286,13 +323,13 @@ func runRoutes() {
 		loc := fmt.Sprintf("%s:%d", r.File, r.Line)
 		fmt.Printf("%-8s %-30s %-30s %s\n", r.Method, r.Path, r.Handler, loc)
 	}
+	return exitOK
 }
 
-func runSchema() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+func runSchema() int {
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
 	fs := flag.NewFlagSet("schema", flag.ExitOnError)
@@ -303,7 +340,7 @@ func runSchema() {
 	conns, err := database.DiscoverConnections(cwd)
 	if err != nil || len(conns.Connections) == 0 {
 		fmt.Println("No database configuration detected. Add a .env or SQLite file.")
-		return
+		return exitOK
 	}
 
 	res, err := database.Introspect(context.Background(), &conns.Connections[0], database.SchemaOptions{
@@ -311,35 +348,29 @@ func runSchema() {
 		Filter:  *filterFlag,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Schema error: %v\n", err)
-		return
+		return fail("Schema error: %v", err)
 	}
 
 	data, _ := json.MarshalIndent(res, "", "  ")
 	fmt.Println(string(data))
+	return exitOK
 }
 
-func runUpdate() {
-	runInit()
-}
-
-func runInspect() {
+func runInspect() int {
 	if len(os.Args) < 3 {
 		fmt.Println("Usage: go-boost inspect <symbol_name>")
-		return
+		return exitOK
 	}
 	symbolName := os.Args[2]
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
 	symbols, err := astparser.ParsePath(cwd)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing AST: %v\n", err)
-		return
+		return fail("Error parsing AST: %v", err)
 	}
 
 	found := false
@@ -382,13 +413,13 @@ func runInspect() {
 	if !found {
 		fmt.Printf("Symbol '%s' not found in AST.\n", symbolName)
 	}
+	return exitOK
 }
 
-func runCheck() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return
+func runCheck() int {
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
@@ -398,6 +429,8 @@ func runCheck() {
 	issues, err := astparser.CheckConcurrency(cwd)
 	diag, _ := runner.CodeCheck(context.Background(), cwd, "./...")
 
+	vetFailed := strings.HasPrefix(diag, "Diagnostics")
+
 	if *formatFlag == "json" {
 		out := map[string]any{
 			"concurrency_issues": issues,
@@ -405,13 +438,14 @@ func runCheck() {
 		}
 		data, _ := json.MarshalIndent(out, "", "  ")
 		fmt.Println(string(data))
-		return
+		return findingsExit(len(issues) > 0 || vetFailed)
 	}
 
 	fmt.Println("🔍 Running static concurrency hazard analysis...")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Concurrency check error: %v\n", err)
-	} else if len(issues) == 0 {
+		return fail("Concurrency check error: %v", err)
+	}
+	if len(issues) == 0 {
 		fmt.Println("✅ Concurrency audit passed: No goroutine leaks or mutex issues detected.")
 	} else {
 		fmt.Printf("⚠️ Found %d concurrency issue(s):\n", len(issues))
@@ -423,13 +457,20 @@ func runCheck() {
 
 	fmt.Println("\n🔍 Running `go vet` and compilation checks...")
 	fmt.Println(diag)
+	return findingsExit(len(issues) > 0 || vetFailed)
 }
 
-func runBench() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return
+func findingsExit(hasFindings bool) int {
+	if hasFindings {
+		return exitFindings
+	}
+	return exitOK
+}
+
+func runBench() int {
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
 	pkg := "./..."
@@ -440,13 +481,12 @@ func runBench() {
 	fmt.Printf("⏱️ Running benchmarks on package '%s' with memory profiling (-benchmem)...\n", pkg)
 	report, err := runner.RunBenchmark(context.Background(), cwd, pkg, ".")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Benchmark error: %v\n", err)
-		return
+		return fail("Benchmark error: %v", err)
 	}
 
 	if len(report.Items) == 0 {
 		fmt.Println("No benchmark functions found. (Create functions starting with 'Benchmark' in *_test.go files)")
-		return
+		return exitOK
 	}
 
 	fmt.Printf("\n%-35s %-12s %-15s %-12s %-12s\n", "BENCHMARK", "ITERATIONS", "SPEED", "MEMORY", "ALLOCS")
@@ -458,13 +498,13 @@ func runBench() {
 		fmt.Printf("%-35s %-12d %-15s %-12s %-12s\n", it.Name, it.Iterations, speed, mem, allocs)
 	}
 	fmt.Printf("\n%s\n", report.Summary)
+	return exitOK
 }
 
-func runSecurity() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return
+func runSecurity() int {
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
 	fs := flag.NewFlagSet("security", flag.ExitOnError)
@@ -473,25 +513,24 @@ func runSecurity() {
 
 	vulns, err := security.ScanCodebase(cwd)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Security scan error: %v\n", err)
-		return
+		return fail("Security scan error: %v", err)
 	}
 
 	if *formatFlag == "json" {
 		data, _ := json.MarshalIndent(vulns, "", "  ")
 		fmt.Println(string(data))
-		return
+		return findingsExit(len(vulns) > 0)
 	}
 
 	if *formatFlag == "sarif" {
 		fmt.Println(formatSARIF(vulns))
-		return
+		return findingsExit(len(vulns) > 0)
 	}
 
 	fmt.Println("🛡️  Running static security and vulnerability audit...")
 	if len(vulns) == 0 {
 		fmt.Println("✅ Security audit passed: No SQL injection, hardcoded secrets, or insecure TLS detected.")
-		return
+		return exitOK
 	}
 
 	fmt.Printf("🚨 Found %d potential security vulnerability(ies):\n\n", len(vulns))
@@ -499,35 +538,34 @@ func runSecurity() {
 		fmt.Printf("   [%s] %s (File: %s:%d)\n", v.Severity, v.Message, v.File, v.Line)
 		fmt.Printf("        Remediation: %s\n\n", v.Remediation)
 	}
+	return exitFindings
 }
 
-func runMock() {
+func runMock() int {
 	if len(os.Args) < 3 {
 		fmt.Println("Usage: go-boost mock <InterfaceName>")
-		return
+		return exitOK
 	}
 	ifaceName := os.Args[2]
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
-	code, err := generator.GenerateMockCode(cwd, ifaceName)
+	mockCode, err := generator.GenerateMockCode(cwd, ifaceName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return
+		return fail("Error: %v", err)
 	}
 
-	fmt.Println(code)
+	fmt.Println(mockCode)
+	return exitOK
 }
 
-func runOpenAPI() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return
+func runOpenAPI() int {
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
 	d := detector.NewDetector(cwd)
@@ -539,43 +577,41 @@ func runOpenAPI() {
 
 	spec, err := generator.GenerateOpenAPISpec(cwd, title)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error generating OpenAPI spec: %v\n", err)
-		return
+		return fail("Error generating OpenAPI spec: %v", err)
 	}
 
 	fmt.Println(spec)
+	return exitOK
 }
 
-func runMigrate() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return
+func runMigrate() int {
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
 	conns, err := database.DiscoverConnections(cwd)
 	if err != nil || len(conns.Connections) == 0 {
 		fmt.Println("No database configuration detected. Add a .env or SQLite file.")
-		return
+		return exitOK
 	}
 
 	fmt.Println("🔄 Comparing database schema with Go struct models...")
 	files, err := database.GenerateMigrationScaffold(context.Background(), &conns.Connections[0], cwd)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Migration generation: %v\n", err)
-		return
+		return fail("Migration generation: %v", err)
 	}
 
 	fmt.Println("✨ Successfully generated migration files:")
 	fmt.Printf("   Up  : %s\n", files.UpPath)
 	fmt.Printf("   Down: %s\n", files.DownPath)
+	return exitOK
 }
 
-func runDeadCode() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return
+func runDeadCode() int {
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
 	fs := flag.NewFlagSet("deadcode", flag.ExitOnError)
@@ -584,20 +620,19 @@ func runDeadCode() {
 
 	unused, err := astparser.DetectDeadCode(cwd)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Dead code check error: %v\n", err)
-		return
+		return fail("Dead code check error: %v", err)
 	}
 
 	if *formatFlag == "json" {
 		data, _ := json.MarshalIndent(unused, "", "  ")
 		fmt.Println(string(data))
-		return
+		return findingsExit(len(unused) > 0)
 	}
 
 	fmt.Println("🔍 Scanning AST for unreferenced/dead declarations...")
 	if len(unused) == 0 {
 		fmt.Println("✅ No dead or unreferenced symbols detected.")
-		return
+		return exitOK
 	}
 
 	fmt.Printf("⚠️ Found %d unreferenced declaration(s):\n\n", len(unused))
@@ -607,6 +642,7 @@ func runDeadCode() {
 		loc := fmt.Sprintf("%s:%d", u.File, u.Line)
 		fmt.Printf("%-12s %-30s %s\n", u.Kind, u.Name, loc)
 	}
+	return exitFindings
 }
 
 func formatSARIF(vulns []security.SecurityVulnerability) string {
@@ -706,11 +742,10 @@ func formatSARIF(vulns []security.SecurityVulnerability) string {
 	return string(data)
 }
 
-func runSupervisedApp() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to get working directory: %v\n", err)
-		os.Exit(1)
+func runSupervisedApp() int {
+	cwd, code := workingDir()
+	if code != exitOK {
+		return code
 	}
 
 	var cmdArgs []string
@@ -730,13 +765,14 @@ func runSupervisedApp() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	err = runner.RunSupervised(ctx, cwd, cmdArgs)
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+	if err := runner.RunSupervised(ctx, cwd, cmdArgs); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
 		}
-		os.Exit(1)
+		return fail("%v", err)
 	}
+	return exitOK
 }
 
 func hasMakefileRunTarget(rootDir string) bool {
@@ -744,30 +780,23 @@ func hasMakefileRunTarget(rootDir string) bool {
 	if err != nil {
 		return false
 	}
-	lines := strings.Split(string(content), "\n")
-	for _, l := range lines {
-		trimmed := strings.TrimSpace(l)
-		if strings.HasPrefix(trimmed, "run:") || strings.HasPrefix(trimmed, "run :") {
-			return true
+	for _, l := range strings.Split(string(content), "\n") {
+		if strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") {
+			continue
+		}
+		name, _, found := strings.Cut(l, ":")
+		if !found {
+			continue
+		}
+		for _, target := range strings.Fields(name) {
+			if target == "run" {
+				return true
+			}
 		}
 	}
 	return false
 }
 
 func detectMainEntry(rootDir string) string {
-	if _, err := os.Stat(filepath.Join(rootDir, "cmd")); err == nil {
-		entries, err := os.ReadDir(filepath.Join(rootDir, "cmd"))
-		if err == nil && len(entries) > 0 {
-			for _, e := range entries {
-				if e.IsDir() {
-					return "./cmd/" + e.Name()
-				}
-			}
-			return "./cmd/..."
-		}
-	}
-	if _, err := os.Stat(filepath.Join(rootDir, "main.go")); err == nil {
-		return "main.go"
-	}
-	return "./..."
+	return mcp.DetectMainEntry(rootDir)
 }

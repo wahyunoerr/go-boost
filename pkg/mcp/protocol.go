@@ -5,16 +5,18 @@ import "encoding/json"
 const JSONRPCVersion = "2.0"
 
 const (
-	Version2024      = "2024-11-05"
-	Version2025      = "2025-11-25"
-	Version2026      = "2026-01-01"
-	LatestMCPVersion = Version2026
+	Version20241105  = "2024-11-05"
+	Version20250326  = "2025-03-26"
+	Version20250618  = "2025-06-18"
+	Version20251125  = "2025-11-25"
+	LatestMCPVersion = Version20251125
 )
 
 var SupportedVersions = []string{
-	Version2026,
-	Version2025,
-	Version2024,
+	Version20251125,
+	Version20250618,
+	Version20250326,
+	Version20241105,
 }
 
 func NegotiateProtocolVersion(requested string) string {
@@ -26,10 +28,16 @@ func NegotiateProtocolVersion(requested string) string {
 			return v
 		}
 	}
-	if len(requested) >= 4 && requested[:4] == "2024" {
-		return Version2024
-	}
 	return LatestMCPVersion
+}
+
+func IsSupportedVersion(version string) bool {
+	for _, v := range SupportedVersions {
+		if v == version {
+			return true
+		}
+	}
+	return false
 }
 
 type Request struct {
@@ -37,6 +45,8 @@ type Request struct {
 	ID      any             `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
+
+	rawID json.RawMessage
 }
 
 type Response struct {
