@@ -3,10 +3,15 @@ package generator
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/wahyunoerr/go-boost/pkg/detector"
 )
+
+const toolPackagePath = "github.com/wahyunoerr/go-boost/cmd/go-boost"
 
 const (
 	guidelineBeginMarker = "<!-- BEGIN go-boost generated guidelines -->"
@@ -62,6 +67,8 @@ func generateGuidelines(stack *detector.ProjectStack) string {
 	sb.WriteString(fmt.Sprintf("- **Logger**: %s\n", formatDetected(stack.Logger, "")))
 	sb.WriteString(fmt.Sprintf("- **Architecture**: `%s`\n\n", stack.Architecture))
 
+	sb.WriteString(renderLayout(stack.Layout))
+
 	sb.WriteString("## Available MCP Tools via `go-boost`\n")
 	sb.WriteString(fmt.Sprintf("You have access to the `go-boost` MCP server with %d native tools:\n", len(ToolCatalog)))
 	for i, tool := range ToolCatalog {
@@ -91,6 +98,92 @@ func generateGuidelines(stack *detector.ProjectStack) string {
 	sb.WriteString("- **Testing**: Write idiomatic table-driven tests with `t.Run(tc.name, func(t *testing.T) { ... })`.\n")
 
 	return sb.String()
+}
+
+func renderLayout(layout *detector.ProjectLayout) string {
+	if layout == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("## Project Layout\n")
+	sb.WriteString("These are the directories that exist in this repository. Put new code in the directory that already holds code of the same kind.\n\n")
+
+	if len(layout.MainPackages) > 0 {
+		sb.WriteString(fmt.Sprintf("- **Entry points**: %s\n", codeList(layout.MainPackages)))
+	}
+	if len(layout.SourceRoots) > 0 {
+		sb.WriteString(fmt.Sprintf("- **Source roots**: %s\n", codeList(layout.SourceRoots)))
+	}
+
+	for _, layer := range []string{"handler", "usecase", "repository", "domain", "transport", "infra", "middleware"} {
+		paths, ok := layout.Layers[layer]
+		if !ok || len(paths) == 0 {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("- **%s**: %s\n", layerLabel(layer), codeList(paths)))
+	}
+
+	if len(layout.Features) > 0 {
+		sb.WriteString(fmt.Sprintf("- **Feature modules**: %s\n", codeList(layout.Features)))
+	}
+	if len(layout.ConfigDirs) > 0 {
+		sb.WriteString(fmt.Sprintf("- **Configuration**: %s\n", codeList(layout.ConfigDirs)))
+	}
+	if len(layout.Migrations) > 0 {
+		sb.WriteString(fmt.Sprintf("- **Migrations**: %s\n", codeList(layout.Migrations)))
+	}
+	if layout.TestStyle != "" {
+		sb.WriteString(fmt.Sprintf("- **Test package style**: %s\n", layout.TestStyle))
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString(layoutGuidance(layout.Style))
+	sb.WriteString("\n")
+
+	return sb.String()
+}
+
+func layerLabel(layer string) string {
+	switch layer {
+	case "handler":
+		return "HTTP handlers"
+	case "usecase":
+		return "Business logic"
+	case "repository":
+		return "Data access"
+	case "domain":
+		return "Domain types"
+	case "transport":
+		return "Other transports"
+	case "infra":
+		return "Infrastructure"
+	case "middleware":
+		return "Middleware"
+	default:
+		return layer
+	}
+}
+
+func layoutGuidance(style string) string {
+	switch style {
+	case "feature":
+		return "This project groups code by feature. A new feature gets its own directory containing every layer it needs; do not add a shared top-level layer directory.\n"
+	case "layered":
+		return "This project groups code by layer. Follow the existing dependency direction and do not let an inner layer import an outer one.\n"
+	case "partial":
+		return "This project uses some layer directories but not a full set. Follow the local convention of the package you are editing rather than introducing a new structure.\n"
+	default:
+		return "This project keeps its packages flat. Do not introduce a layered directory tree unless asked.\n"
+	}
+}
+
+func codeList(items []string) string {
+	quoted := make([]string, 0, len(items))
+	for _, item := range items {
+		quoted = append(quoted, "`"+item+"`")
+	}
+	return strings.Join(quoted, ", ")
 }
 
 func isDetected(value string) bool {
@@ -133,31 +226,17 @@ Rules:
 }
 
 func GenerateMCPConfigJSON(binaryPath string) string {
-	if binaryPath == "" {
-		binaryPath = "go-boost"
-	}
-
-	config := map[string]any{
-		"mcpServers": map[string]any{
-			"go-boost": mcpServerEntry(binaryPath),
-		},
-	}
-
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return "{}"
-	}
-	return string(data) + "\n"
+	return renderMCPConfig("mcpServers", MCPInvocation{Command: binaryPath, Args: []string{"mcp"}})
 }
 
 func GenerateVSCodeMCPConfigJSON(binaryPath string) string {
-	if binaryPath == "" {
-		binaryPath = "go-boost"
-	}
+	return renderMCPConfig("servers", MCPInvocation{Command: binaryPath, Args: []string{"mcp"}})
+}
 
+func renderMCPConfig(key string, invocation MCPInvocation) string {
 	config := map[string]any{
-		"servers": map[string]any{
-			"go-boost": mcpServerEntry(binaryPath),
+		key: map[string]any{
+			serverKey: invocation.entry(),
 		},
 	}
 
@@ -168,11 +247,60 @@ func GenerateVSCodeMCPConfigJSON(binaryPath string) string {
 	return string(data) + "\n"
 }
 
-func mcpServerEntry(binaryPath string) map[string]any {
-	return map[string]any{
-		"command": binaryPath,
-		"args":    []string{"mcp"},
+type MCPInvocation struct {
+	Command  string
+	Args     []string
+	Portable bool
+}
+
+func (m MCPInvocation) entry() map[string]any {
+	command := m.Command
+	if command == "" {
+		command = "go-boost"
 	}
+	args := m.Args
+	if len(args) == 0 {
+		args = []string{"mcp"}
+	}
+	return map[string]any{
+		"command": command,
+		"args":    args,
+	}
+}
+
+func ResolveMCPInvocation(rootDir, binaryPath string) MCPInvocation {
+	if hasToolDirective(rootDir) {
+		return MCPInvocation{Command: "go", Args: []string{"tool", "go-boost", "mcp"}, Portable: true}
+	}
+	if onPath("go-boost") {
+		return MCPInvocation{Command: "go-boost", Args: []string{"mcp"}, Portable: true}
+	}
+	if binaryPath == "" {
+		binaryPath = "go-boost"
+	}
+	return MCPInvocation{Command: binaryPath, Args: []string{"mcp"}}
+}
+
+func hasToolDirective(rootDir string) bool {
+	data, err := os.ReadFile(filepath.Join(rootDir, "go.mod"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "tool ") && strings.Contains(line, toolPackagePath) {
+			return true
+		}
+		if line == toolPackagePath {
+			return true
+		}
+	}
+	return false
+}
+
+func onPath(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
 }
 
 func GenerateMakefile(mainPackage string) string {

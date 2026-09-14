@@ -50,6 +50,8 @@ func (d *Detector) Detect() (*ProjectStack, error) {
 
 	d.scanDirectoryStructure(stack)
 
+	stack.Layout = DetectLayout(d.rootDir)
+
 	d.inferArchitecture(stack)
 
 	return stack, nil
@@ -215,6 +217,17 @@ func (d *Detector) inferArchitecture(stack *ProjectStack) {
 	if stack.DetectedDirs["internal/adapter"] || stack.DetectedDirs["internal/ports"] {
 		stack.Architecture = "hexagonal"
 		return
+	}
+
+	if stack.Layout != nil {
+		switch stack.Layout.Style {
+		case "feature":
+			stack.Architecture = "feature_modules"
+			return
+		case "layered":
+			stack.Architecture = "layered"
+			return
+		}
 	}
 
 	stack.Architecture = "standard_flat"

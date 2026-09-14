@@ -32,6 +32,7 @@
   - [4. How to Verify Tool Activation](#4-how-to-verify-tool-activation)
 - [Installation Guide](#installation-guide)
 - [Quick Start](#quick-start)
+- [Exit Codes](#exit-codes)
 - [Editor & AI Assistant Setup](#editor--ai-assistant-setup)
   - [Google Antigravity and Gemini CLI](#1-google-antigravity-and-gemini-cli)
   - [Cursor](#2-cursor)
@@ -72,6 +73,7 @@
 - **Static Security Auditing**: Identifies SQL injection, hardcoded secrets, and TLS hazards in Go source code.
 - **OpenAPI 3.0 Generation**: Scans AST route trees and DTO structs to generate OpenAPI specifications.
 - **AI Guidelines Generator**: Generates tailored `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, and `.cursorrules`, and installs Agent Skills into `.claude/skills/*` based on your project stack. Existing content you wrote is preserved.
+- **Layout-Aware, Not Layout-Imposing**: Reads the directory structure you already use, including non-standard names such as `controllers`, `services`, `storage`, and `models`, and records the real paths in the guidelines so the agent writes new code where your existing code lives.
 
 ---
 
@@ -398,19 +400,53 @@ To verify that the `go-boost` MCP server is running properly in your editor:
 
 ## Installation Guide
 
-### 1. Using `go install` (Recommended)
-Make sure Go 1.22 or newer is installed on your system:
+### 1. As a project tool (recommended, Go 1.24+)
+
+This pins go-boost in your `go.mod` the way `composer require --dev` pins a PHP
+dev dependency. Everyone who clones the repository gets the same version, and
+nobody has to install anything globally.
+
+```bash
+go get -tool github.com/wahyunoerr/go-boost/cmd/go-boost@latest
+```
+
+Your `go.mod` gains a `tool` directive:
+
+```
+tool github.com/wahyunoerr/go-boost/cmd/go-boost
+```
+
+Run it through the Go toolchain:
+
+```bash
+go tool go-boost init
+go tool go-boost status
+```
+
+This is the option to choose if you work in a team. Because the command is
+`go tool go-boost` rather than a path on your disk, the generated MCP
+configuration works on every machine and can be committed.
+
+### 2. As a global binary (Go 1.22+)
 
 ```bash
 go install github.com/wahyunoerr/go-boost/cmd/go-boost@latest
 ```
 
-Ensure `$GOPATH/bin` is in your shell `PATH`:
+Ensure `$GOPATH/bin` is on your `PATH`:
+
 ```bash
 export PATH=$PATH:$(go env GOPATH)/bin
 ```
 
-### 2. Building from Source
+Then use `go-boost` directly:
+
+```bash
+go-boost init
+```
+
+### 3. Building from source
+
 ```bash
 git clone https://github.com/wahyunoerr/go-boost.git
 cd go-boost
@@ -419,10 +455,25 @@ sudo mv bin/go-boost /usr/local/bin/
 ```
 
 ### Verification
-Run the version command to confirm the binary is ready:
+
 ```bash
-go-boost version
+go tool go-boost version   # project tool install
+go-boost version           # global install
 ```
+
+### Which install method ends up in your MCP config
+
+`go-boost init` writes the invocation that will actually work on other
+machines, in this order:
+
+| Situation | Generated command | Portable |
+| :--- | :--- | :--- |
+| `tool` directive in `go.mod` | `go tool go-boost mcp` | Yes, safe to commit |
+| `go-boost` found on `PATH` | `go-boost mcp` | Yes, if teammates also installed it |
+| Neither | absolute path to your binary | No, keep it gitignored |
+
+`init` tells you which one it chose. If it falls back to an absolute path, add
+the tool directive and run `init` again to make the config shareable.
 
 ---
 
@@ -435,12 +486,47 @@ cd /path/to/your/go-project
 
 ### Step 2: Initialize go-boost
 ```bash
-go-boost init
+go tool go-boost init    # or: go-boost init
 ```
-This command inspects your codebase, detects frameworks and libraries, and creates:
+This command inspects your codebase, detects frameworks and libraries, reads
+your actual directory structure, and creates:
 - MCP configurations: `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`
 - AI guideline documents: `AGENTS.md`, `CLAUDE.md`, `.cursorrules`
 - Agent Skills installed into the `.claude/skills/` directory
+
+`init` never discards work you did yourself. Generated guidelines live between
+`<!-- BEGIN go-boost generated guidelines -->` markers and only that block is
+rewritten, so anything you add around it survives. An existing `.mcp.json` keeps
+every other server you had configured. Re-running `init` is safe and idempotent.
+
+### It adapts to your layout instead of imposing one
+
+go-boost does not require a particular directory structure. `init` reads the
+directories you actually have and records them in the guidelines, so the agent
+places new code where your existing code lives. It recognises layer names
+beyond the Go community defaults, including `controllers`, `services`,
+`storage`, `models`, `delivery`, and `transport`, and it detects whether your
+project is organised by layer, by feature, or kept flat.
+
+For a project laid out by feature, the generated guidelines contain:
+
+```markdown
+## Project Layout
+
+- **Entry points**: `./cmd/api`, `./cmd/worker`
+- **Source roots**: `internal`
+- **HTTP handlers**: `internal/order/handler`, `internal/user/handler`
+- **Business logic**: `internal/order/service`
+- **Data access**: `internal/user/repository`
+- **Feature modules**: `order`, `user`
+- **Migrations**: `db/migrations`
+
+This project groups code by feature. A new feature gets its own directory
+containing every layer it needs; do not add a shared top-level layer directory.
+```
+
+The same command on a flat single-package project instead records that the
+project is flat and tells the agent not to introduce a directory tree.
 
 ### Step 3: View Project Stack Status
 ```bash
