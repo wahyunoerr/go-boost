@@ -2,10 +2,19 @@ package generator
 
 import (
 	"fmt"
+	"go/format"
+	"go/parser"
+	"go/token"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/wahyunoerr/go-boost/pkg/astparser"
 )
+
+var qualifiedTypeRegex = regexp.MustCompile(`\b([a-zA-Z_][a-zA-Z0-9_]*)\.[A-Z][a-zA-Z0-9_]*`)
 
 func GenerateMockCode(rootDir string, interfaceName string) (string, error) {
 	symbols, err := astparser.ParsePath(rootDir)
@@ -13,156 +22,288 @@ func GenerateMockCode(rootDir string, interfaceName string) (string, error) {
 		return "", fmt.Errorf("failed to parse AST: %w", err)
 	}
 
-	var targetInterface *astparser.InterfaceInfo
+	target, err := findInterface(symbols, interfaceName)
+	if err != nil {
+		return "", err
+	}
+
+	methods, err := resolveAllMethods(symbols, target, map[string]bool{})
+	if err != nil {
+		return "", err
+	}
+	if len(methods) == 0 {
+		return "", fmt.Errorf("interface '%s' declares no methods to mock", target.Name)
+	}
+
+	imports := resolveImports(rootDir, target, methods)
+	code := renderMock(target, methods, imports)
+
+	formatted, err := format.Source([]byte(code))
+	if err != nil {
+		return "", fmt.Errorf("generated mock for '%s' is not valid Go: %w", target.Name, err)
+	}
+
+	return string(formatted), nil
+}
+
+func findInterface(symbols *astparser.PackageSymbols, name string) (*astparser.InterfaceInfo, error) {
 	for i := range symbols.Interfaces {
-		if strings.EqualFold(symbols.Interfaces[i].Name, interfaceName) {
-			targetInterface = &symbols.Interfaces[i]
-			break
+		if symbols.Interfaces[i].Name == name {
+			return &symbols.Interfaces[i], nil
+		}
+	}
+	for i := range symbols.Interfaces {
+		if strings.EqualFold(symbols.Interfaces[i].Name, name) {
+			return &symbols.Interfaces[i], nil
+		}
+	}
+	return nil, fmt.Errorf("interface '%s' not found in project", name)
+}
+
+func resolveAllMethods(symbols *astparser.PackageSymbols, target *astparser.InterfaceInfo, visited map[string]bool) ([]astparser.InterfaceMethod, error) {
+	if visited[target.Name] {
+		return nil, nil
+	}
+	visited[target.Name] = true
+
+	methods := append([]astparser.InterfaceMethod{}, target.Methods...)
+
+	for _, embed := range target.Embeds {
+		local := embed
+		if idx := strings.LastIndex(embed, "."); idx >= 0 {
+			return nil, fmt.Errorf(
+				"interface '%s' embeds '%s' from another package; go-boost cannot see its method set, so the generated mock would not compile",
+				target.Name, embed)
+		}
+
+		embedded, err := findInterface(symbols, local)
+		if err != nil {
+			return nil, fmt.Errorf("interface '%s' embeds '%s', which was not found in the project", target.Name, embed)
+		}
+		sub, err := resolveAllMethods(symbols, embedded, visited)
+		if err != nil {
+			return nil, err
+		}
+		methods = append(methods, sub...)
+	}
+
+	seen := map[string]bool{}
+	unique := make([]astparser.InterfaceMethod, 0, len(methods))
+	for _, m := range methods {
+		if seen[m.Name] {
+			continue
+		}
+		seen[m.Name] = true
+		unique = append(unique, m)
+	}
+
+	sort.SliceStable(unique, func(i, j int) bool { return unique[i].Name < unique[j].Name })
+	return unique, nil
+}
+
+func resolveImports(rootDir string, target *astparser.InterfaceInfo, methods []astparser.InterfaceMethod) []string {
+	needed := map[string]bool{"sync": true}
+
+	qualifiers := map[string]bool{}
+	for _, m := range methods {
+		for _, t := range m.ParamTypes {
+			collectQualifiers(t, qualifiers)
+		}
+		for _, t := range m.Returns {
+			collectQualifiers(t, qualifiers)
 		}
 	}
 
-	if targetInterface == nil {
-		return "", fmt.Errorf("interface '%s' not found in project", interfaceName)
-	}
-
-	mockStructName := "Mock" + targetInterface.Name
-	var sb strings.Builder
-
-	neededImports := map[string]bool{"sync": true}
-	for _, m := range targetInterface.Methods {
-		for _, p := range m.Params {
-			if strings.Contains(p, "context.Context") {
-				neededImports["context"] = true
-			}
-			if strings.Contains(p, "time.Time") || strings.Contains(p, "time.Duration") {
-				neededImports["time"] = true
-			}
-			if strings.Contains(p, "io.Reader") || strings.Contains(p, "io.Writer") || strings.Contains(p, "io.Closer") {
-				neededImports["io"] = true
-			}
-			if strings.Contains(p, "http.Request") || strings.Contains(p, "http.ResponseWriter") {
-				neededImports["net/http"] = true
-			}
-		}
-		for _, r := range m.Returns {
-			if strings.Contains(r, "context.Context") {
-				neededImports["context"] = true
-			}
-			if strings.Contains(r, "time.Time") || strings.Contains(r, "time.Duration") {
-				neededImports["time"] = true
-			}
-			if strings.Contains(r, "io.Reader") || strings.Contains(r, "io.Writer") || strings.Contains(r, "io.Closer") {
-				neededImports["io"] = true
-			}
-			if strings.Contains(r, "http.Request") || strings.Contains(r, "http.ResponseWriter") {
-				neededImports["net/http"] = true
+	if len(qualifiers) > 0 {
+		for qualifier, path := range importsOfFile(rootDir, target.File) {
+			if qualifiers[qualifier] {
+				needed[path] = true
 			}
 		}
 	}
 
-	pkgName := symbols.Package
+	paths := make([]string, 0, len(needed))
+	for p := range needed {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func collectQualifiers(typeStr string, out map[string]bool) {
+	for _, match := range qualifiedTypeRegex.FindAllStringSubmatch(typeStr, -1) {
+		if len(match) > 1 {
+			out[match[1]] = true
+		}
+	}
+}
+
+func importsOfFile(rootDir, file string) map[string]string {
+	result := map[string]string{}
+
+	path := file
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(rootDir, file)
+	}
+
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+	if err != nil {
+		return result
+	}
+
+	for _, imp := range node.Imports {
+		importPath, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			continue
+		}
+		qualifier := filepath.Base(importPath)
+		if imp.Name != nil {
+			if imp.Name.Name == "_" || imp.Name.Name == "." {
+				continue
+			}
+			qualifier = imp.Name.Name
+		}
+		result[qualifier] = importPath
+	}
+
+	return result
+}
+
+func renderMock(target *astparser.InterfaceInfo, methods []astparser.InterfaceMethod, imports []string) string {
+	mockName := "Mock" + target.Name
+	typeParams, typeArgs := renderTypeParams(target.TypeParams)
+	receiver := mockName + typeArgs
+
+	pkgName := target.Package
 	if pkgName == "" {
 		pkgName = "mocks"
 	}
 
+	var sb strings.Builder
 	sb.WriteString("// Code generated by go-boost; DO NOT EDIT.\n\n")
 	sb.WriteString("package " + pkgName + "\n\n")
-	sb.WriteString("import (\n")
-	for imp := range neededImports {
-		sb.WriteString(fmt.Sprintf("\t\"%s\"\n", imp))
+
+	if len(imports) > 0 {
+		sb.WriteString("import (\n")
+		for _, imp := range imports {
+			sb.WriteString(fmt.Sprintf("\t%q\n", imp))
+		}
+		sb.WriteString(")\n\n")
 	}
-	sb.WriteString(")\n\n")
 
-	sb.WriteString(fmt.Sprintf("type %s struct {\n", mockStructName))
-	sb.WriteString("\tmu sync.Mutex\n")
-	sb.WriteString("\tCalls map[string]int\n")
+	if typeParams == "" {
+		sb.WriteString(fmt.Sprintf("var _ %s = (*%s)(nil)\n\n", target.Name, mockName))
+	} else {
+		sb.WriteString(fmt.Sprintf("func _%s(m *%s) %s { return m }\n\n", typeParams, receiver, target.Name+typeArgs))
+	}
 
-	for _, m := range targetInterface.Methods {
-		fnType := formatFuncType(m.Params, m.Returns)
-		sb.WriteString(fmt.Sprintf("\t%sFunc %s\n", m.Name, fnType))
+	sb.WriteString(fmt.Sprintf("type %s%s struct {\n", mockName, typeParams))
+	sb.WriteString("\tmu    sync.Mutex\n")
+	sb.WriteString("\tCalls map[string]int\n\n")
+	for _, m := range methods {
+		sb.WriteString(fmt.Sprintf("\t%sFunc %s\n", m.Name, formatFuncType(m.Params, m.Returns)))
 	}
 	sb.WriteString("}\n\n")
 
-	sb.WriteString(fmt.Sprintf("func New%s() *%s {\n", mockStructName, mockStructName))
-	sb.WriteString(fmt.Sprintf("\treturn &%s{\n", mockStructName))
-	sb.WriteString("\t\tCalls: make(map[string]int),\n")
+	sb.WriteString(fmt.Sprintf("func New%s%s() *%s {\n", mockName, typeParams, receiver))
+	sb.WriteString(fmt.Sprintf("\treturn &%s{Calls: make(map[string]int)}\n", receiver))
+	sb.WriteString("}\n\n")
+
+	sb.WriteString(fmt.Sprintf("// CallCount reports how many times a method was invoked.\nfunc (m *%s) CallCount(method string) int {\n", receiver))
+	sb.WriteString("\tm.mu.Lock()\n\tdefer m.mu.Unlock()\n\treturn m.Calls[method]\n}\n\n")
+
+	for _, m := range methods {
+		renderMethod(&sb, receiver, m)
+	}
+
+	return sb.String()
+}
+
+func renderTypeParams(params []string) (declaration string, arguments string) {
+	if len(params) == 0 {
+		return "", ""
+	}
+	names := make([]string, 0, len(params))
+	for _, p := range params {
+		names = append(names, strings.Fields(p)[0])
+	}
+	return "[" + strings.Join(params, ", ") + "]", "[" + strings.Join(names, ", ") + "]"
+}
+
+func renderResults(returns []string) string {
+	switch len(returns) {
+	case 0:
+		return ""
+	case 1:
+		return returns[0]
+	default:
+		return "(" + strings.Join(returns, ", ") + ")"
+	}
+}
+
+func renderMethod(sb *strings.Builder, receiver string, m astparser.InterfaceMethod) {
+	params := make([]string, 0, len(m.ParamTypes))
+	for i, t := range m.ParamTypes {
+		params = append(params, fmt.Sprintf("%s %s", paramName(m, i), t))
+	}
+
+	callArgs := make([]string, 0, len(m.ParamNames))
+	for i := range m.ParamTypes {
+		name := paramName(m, i)
+		if m.Variadic && i == len(m.ParamTypes)-1 {
+			name += "..."
+		}
+		callArgs = append(callArgs, name)
+	}
+
+	results := renderResults(m.Returns)
+	signature := fmt.Sprintf("func (m *%s) %s(%s)", receiver, m.Name, strings.Join(params, ", "))
+	if results != "" {
+		signature += " " + results
+	}
+
+	sb.WriteString(signature + " {\n")
+	sb.WriteString("\tm.mu.Lock()\n")
+	sb.WriteString(fmt.Sprintf("\tm.Calls[%q]++\n", m.Name))
+	sb.WriteString("\tm.mu.Unlock()\n\n")
+
+	sb.WriteString(fmt.Sprintf("\tif m.%sFunc != nil {\n", m.Name))
+	if len(m.Returns) > 0 {
+		sb.WriteString(fmt.Sprintf("\t\treturn m.%sFunc(%s)\n", m.Name, strings.Join(callArgs, ", ")))
+	} else {
+		sb.WriteString(fmt.Sprintf("\t\tm.%sFunc(%s)\n\t\treturn\n", m.Name, strings.Join(callArgs, ", ")))
+	}
 	sb.WriteString("\t}\n")
-	sb.WriteString("}\n\n")
 
-	for _, m := range targetInterface.Methods {
-		paramNames := make([]string, 0, len(m.Params))
-		for i, p := range m.Params {
-			parts := strings.Fields(p)
-			if len(parts) >= 2 {
-				paramNames = append(paramNames, parts[0])
-			} else {
-				paramNames = append(paramNames, fmt.Sprintf("arg%d", i))
-			}
+	if len(m.Returns) > 0 {
+		names := make([]string, 0, len(m.Returns))
+		sb.WriteString("\n")
+		for i, r := range m.Returns {
+			name := fmt.Sprintf("zero%d", i)
+			names = append(names, name)
+			sb.WriteString(fmt.Sprintf("\tvar %s %s\n", name, r))
 		}
-
-		sigParams := strings.Join(m.Params, ", ")
-		callParams := strings.Join(paramNames, ", ")
-		returnTypes := strings.Join(m.Returns, ", ")
-		if len(m.Returns) > 1 {
-			returnTypes = "(" + returnTypes + ")"
-		}
-
-		returnStmt := ""
-		if len(m.Returns) > 0 {
-			returnStmt = "return "
-		}
-
-		sb.WriteString(fmt.Sprintf("func (m *%s) %s(%s) %s {\n", mockStructName, m.Name, sigParams, returnTypes))
-		sb.WriteString("\tm.mu.Lock()\n")
-		sb.WriteString(fmt.Sprintf("\tm.Calls[\"%s\"]++\n", m.Name))
-		sb.WriteString("\tm.mu.Unlock()\n\n")
-		sb.WriteString(fmt.Sprintf("\tif m.%sFunc != nil {\n", m.Name))
-		sb.WriteString(fmt.Sprintf("\t\t%sm.%sFunc(%s)\n", returnStmt, m.Name, callParams))
-		sb.WriteString("\t}\n")
-
-		if len(m.Returns) > 0 {
-			zeroVals := make([]string, len(m.Returns))
-			for i, r := range m.Returns {
-				zeroVals[i] = zeroValueForType(r)
-			}
-			sb.WriteString(fmt.Sprintf("\treturn %s\n", strings.Join(zeroVals, ", ")))
-		}
-		sb.WriteString("}\n\n")
+		sb.WriteString(fmt.Sprintf("\treturn %s\n", strings.Join(names, ", ")))
 	}
 
-	return sb.String(), nil
+	sb.WriteString("}\n\n")
+}
+
+func paramName(m astparser.InterfaceMethod, i int) string {
+	if i < len(m.ParamNames) {
+		name := m.ParamNames[i]
+		if name != "" && name != "_" {
+			return name
+		}
+	}
+	return fmt.Sprintf("arg%d", i)
 }
 
 func formatFuncType(params []string, returns []string) string {
 	p := strings.Join(params, ", ")
-	r := strings.Join(returns, ", ")
-	if len(returns) > 1 {
-		r = "(" + r + ")"
-	}
 	if len(returns) == 0 {
 		return fmt.Sprintf("func(%s)", p)
 	}
-	return fmt.Sprintf("func(%s) %s", p, r)
-}
-
-func zeroValueForType(t string) string {
-	clean := strings.TrimSpace(t)
-	switch clean {
-	case "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "byte", "rune":
-		return "0"
-	case "float32", "float64":
-		return "0.0"
-	case "string":
-		return `""`
-	case "bool":
-		return "false"
-	case "error":
-		return "nil"
-	default:
-		if strings.HasPrefix(clean, "*") || strings.HasPrefix(clean, "[]") || strings.HasPrefix(clean, "map[") || strings.HasPrefix(clean, "chan") || clean == "any" {
-			return "nil"
-		}
-
-		return clean + "{}"
-	}
+	return fmt.Sprintf("func(%s) %s", p, renderResults(returns))
 }

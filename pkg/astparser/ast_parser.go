@@ -9,18 +9,20 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 )
 
 type StructInfo struct {
-	Name    string      `json:"name"`
-	Package string      `json:"package,omitempty"`
-	Doc     string      `json:"doc,omitempty"`
-	File    string      `json:"file"`
-	Line    int         `json:"line"`
-	Fields  []FieldInfo `json:"fields"`
-	Methods []string    `json:"methods,omitempty"`
+	Name       string      `json:"name"`
+	Package    string      `json:"package,omitempty"`
+	Doc        string      `json:"doc,omitempty"`
+	File       string      `json:"file"`
+	Line       int         `json:"line"`
+	TypeParams []string    `json:"type_params,omitempty"`
+	Fields     []FieldInfo `json:"fields"`
+	Methods    []string    `json:"methods,omitempty"`
 }
 
 type FieldInfo struct {
@@ -33,12 +35,14 @@ type FieldInfo struct {
 }
 
 type InterfaceInfo struct {
-	Name    string            `json:"name"`
-	Package string            `json:"package,omitempty"`
-	Doc     string            `json:"doc,omitempty"`
-	File    string            `json:"file"`
-	Line    int               `json:"line"`
-	Methods []InterfaceMethod `json:"methods"`
+	Name       string            `json:"name"`
+	Package    string            `json:"package,omitempty"`
+	Doc        string            `json:"doc,omitempty"`
+	File       string            `json:"file"`
+	Line       int               `json:"line"`
+	TypeParams []string          `json:"type_params,omitempty"`
+	Embeds     []string          `json:"embeds,omitempty"`
+	Methods    []InterfaceMethod `json:"methods"`
 }
 
 type InterfaceMethod struct {
@@ -46,6 +50,10 @@ type InterfaceMethod struct {
 	Params  []string `json:"params"`
 	Returns []string `json:"returns"`
 	Doc     string   `json:"doc,omitempty"`
+
+	ParamNames []string `json:"param_names,omitempty"`
+	ParamTypes []string `json:"param_types,omitempty"`
+	Variadic   bool     `json:"variadic,omitempty"`
 }
 
 type PackageSymbols struct {
@@ -55,7 +63,6 @@ type PackageSymbols struct {
 }
 
 func ParsePath(targetPath string) (*PackageSymbols, error) {
-	fset := token.NewFileSet()
 	symbols := &PackageSymbols{
 		Structs:    make([]StructInfo, 0),
 		Interfaces: make([]InterfaceInfo, 0),
@@ -67,91 +74,185 @@ func ParsePath(targetPath string) (*PackageSymbols, error) {
 	}
 
 	if !info.IsDir() {
+		fset := token.NewFileSet()
 		node, err := parser.ParseFile(fset, targetPath, nil, parser.ParseComments)
 		if err != nil {
 			return nil, fmt.Errorf("parse file error: %w", err)
 		}
 		symbols.Package = node.Name.Name
 		inspectFile(node, fset, targetPath, symbols)
+		attachMethods(symbols, collectMethods([]*parsedFile{{file: node, fset: fset, path: targetPath}}))
+		sortSymbols(symbols)
 		return symbols, nil
 	}
 
-	var filesToParse []string
-	err = filepath.Walk(targetPath, func(path string, fi os.FileInfo, err error) error {
-		if err != nil {
+	files, err := collectGoFiles(targetPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return symbols, nil
+	}
+
+	parsed := parseFilesConcurrently(files)
+
+	for _, pf := range parsed {
+		if symbols.Package == "" && pf.file.Name != nil {
+			symbols.Package = pf.file.Name.Name
+		}
+		inspectFile(pf.file, pf.fset, relativeTo(targetPath, pf.path), symbols)
+	}
+
+	attachMethods(symbols, collectMethods(parsed))
+	sortSymbols(symbols)
+
+	return symbols, nil
+}
+
+type parsedFile struct {
+	file *ast.File
+	fset *token.FileSet
+	path string
+}
+
+func collectGoFiles(targetPath string) ([]string, error) {
+	return walkGoFiles(targetPath, false)
+}
+
+func collectGoFilesWithTests(targetPath string) ([]string, error) {
+	return walkGoFiles(targetPath, true)
+}
+
+func walkGoFiles(targetPath string, includeTests bool) ([]string, error) {
+	var files []string
+	err := filepath.Walk(targetPath, func(path string, fi os.FileInfo, err error) error {
+		if err != nil || fi == nil {
 			return nil
 		}
 		if fi.IsDir() {
-			if ShouldSkipDir(fi) {
+			if path != targetPath && ShouldSkipDir(fi) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if ShouldSkipFile(path, false) {
+		if ShouldSkipFile(path, includeTests) {
 			return nil
 		}
-		filesToParse = append(filesToParse, path)
+		files = append(files, path)
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
+	sort.Strings(files)
+	return files, nil
+}
 
-	if len(filesToParse) == 0 {
-		return symbols, nil
-	}
-
+func parseFilesConcurrently(files []string) []*parsedFile {
 	numWorkers := runtime.NumCPU()
-	if numWorkers > len(filesToParse) {
-		numWorkers = len(filesToParse)
+	if numWorkers > len(files) {
+		numWorkers = len(files)
 	}
 	if numWorkers < 1 {
 		numWorkers = 1
 	}
 
-	fileChan := make(chan string, len(filesToParse))
-	for _, f := range filesToParse {
-		fileChan <- f
-	}
-	close(fileChan)
-
+	results := make([]*parsedFile, len(files))
 	var wg sync.WaitGroup
-	var mu sync.Mutex
+	indexes := make(chan int, len(files))
+	for i := range files {
+		indexes <- i
+	}
+	close(indexes)
 
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			localFset := token.NewFileSet()
-			localSymbols := &PackageSymbols{
-				Structs:    make([]StructInfo, 0),
-				Interfaces: make([]InterfaceInfo, 0),
-			}
-
-			for path := range fileChan {
-				node, err := parser.ParseFile(localFset, path, nil, parser.ParseComments)
+			for idx := range indexes {
+				fset := token.NewFileSet()
+				node, err := parser.ParseFile(fset, files[idx], nil, parser.ParseComments)
 				if err != nil || IsGeneratedAST(node) {
 					continue
 				}
-				if localSymbols.Package == "" && node.Name != nil {
-					localSymbols.Package = node.Name.Name
-				}
-				inspectFile(node, localFset, path, localSymbols)
+				results[idx] = &parsedFile{file: node, fset: fset, path: files[idx]}
 			}
-
-			mu.Lock()
-			if symbols.Package == "" && localSymbols.Package != "" {
-				symbols.Package = localSymbols.Package
-			}
-			symbols.Structs = append(symbols.Structs, localSymbols.Structs...)
-			symbols.Interfaces = append(symbols.Interfaces, localSymbols.Interfaces...)
-			mu.Unlock()
 		}()
 	}
-
 	wg.Wait()
-	return symbols, nil
+
+	parsed := make([]*parsedFile, 0, len(files))
+	for _, pf := range results {
+		if pf != nil {
+			parsed = append(parsed, pf)
+		}
+	}
+	return parsed
+}
+
+type methodKey struct {
+	pkg  string
+	name string
+}
+
+func collectMethods(parsed []*parsedFile) map[methodKey][]string {
+	methods := make(map[methodKey][]string)
+
+	for _, pf := range parsed {
+		pkgName := ""
+		if pf.file.Name != nil {
+			pkgName = pf.file.Name.Name
+		}
+		for _, decl := range pf.file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
+				continue
+			}
+			recvName := extractReceiverName(fn.Recv.List[0].Type)
+			if recvName == "" {
+				continue
+			}
+			key := methodKey{pkg: pkgName, name: recvName}
+			methods[key] = append(methods[key], fn.Name.Name)
+		}
+	}
+
+	for key := range methods {
+		sort.Strings(methods[key])
+	}
+	return methods
+}
+
+func attachMethods(symbols *PackageSymbols, methods map[methodKey][]string) {
+	for i := range symbols.Structs {
+		key := methodKey{pkg: symbols.Structs[i].Package, name: symbols.Structs[i].Name}
+		if m, ok := methods[key]; ok {
+			symbols.Structs[i].Methods = m
+		}
+	}
+}
+
+func sortSymbols(symbols *PackageSymbols) {
+	sort.SliceStable(symbols.Structs, func(i, j int) bool {
+		a, b := symbols.Structs[i], symbols.Structs[j]
+		if a.Package != b.Package {
+			return a.Package < b.Package
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.File < b.File
+	})
+	sort.SliceStable(symbols.Interfaces, func(i, j int) bool {
+		a, b := symbols.Interfaces[i], symbols.Interfaces[j]
+		if a.Package != b.Package {
+			return a.Package < b.Package
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.File < b.File
+	})
 }
 
 func inspectFile(file *ast.File, fset *token.FileSet, filePath string, symbols *PackageSymbols) {
@@ -160,20 +261,10 @@ func inspectFile(file *ast.File, fset *token.FileSet, filePath string, symbols *
 		pkgName = file.Name.Name
 	}
 
-	structMethods := make(map[string][]string)
 	for _, decl := range file.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv != nil && len(fn.Recv.List) > 0 {
-			recvName := extractReceiverName(fn.Recv.List[0].Type)
-			if recvName != "" {
-				structMethods[recvName] = append(structMethods[recvName], fn.Name.Name)
-			}
-		}
-	}
-
-	ast.Inspect(file, func(n ast.Node) bool {
-		genDecl, ok := n.(*ast.GenDecl)
+		genDecl, ok := decl.(*ast.GenDecl)
 		if !ok || genDecl.Tok != token.TYPE {
-			return true
+			continue
 		}
 
 		for _, spec := range genDecl.Specs {
@@ -184,102 +275,153 @@ func inspectFile(file *ast.File, fset *token.FileSet, filePath string, symbols *
 
 			line := fset.Position(typeSpec.Pos()).Line
 			doc := cleanDoc(genDecl.Doc)
+			if typeSpec.Doc != nil {
+				doc = cleanDoc(typeSpec.Doc)
+			}
 
 			switch t := typeSpec.Type.(type) {
 			case *ast.StructType:
-				stInfo := StructInfo{
-					Name:    typeSpec.Name.Name,
-					Package: pkgName,
-					Doc:     doc,
-					File:    filePath,
-					Line:    line,
-					Fields:  make([]FieldInfo, 0),
-					Methods: structMethods[typeSpec.Name.Name],
-				}
-
-				if t.Fields != nil {
-					for _, field := range t.Fields.List {
-						fieldName := ""
-						isEmbedded := false
-						if len(field.Names) > 0 {
-							fieldName = field.Names[0].Name
-						} else {
-							isEmbedded = true
-							fieldName = strings.TrimPrefix(exprToString(field.Type), "*")
-						}
-
-						rawTag := ""
-						tagMap := make(map[string]string)
-						if field.Tag != nil {
-							rawTag = strings.Trim(field.Tag.Value, "`")
-							tagMap = parseStructTags(rawTag)
-						}
-
-						stInfo.Fields = append(stInfo.Fields, FieldInfo{
-							Name:       fieldName,
-							Type:       exprToString(field.Type),
-							Tag:        rawTag,
-							ParsedTags: tagMap,
-							Doc:        cleanDoc(field.Doc),
-							Embedded:   isEmbedded,
-						})
-					}
-				}
-				symbols.Structs = append(symbols.Structs, stInfo)
+				symbols.Structs = append(symbols.Structs, StructInfo{
+					Name:       typeSpec.Name.Name,
+					Package:    pkgName,
+					Doc:        doc,
+					File:       filePath,
+					Line:       line,
+					TypeParams: extractTypeParams(typeSpec.TypeParams),
+					Fields:     extractFields(t.Fields),
+				})
 
 			case *ast.InterfaceType:
-				ifInfo := InterfaceInfo{
-					Name:    typeSpec.Name.Name,
-					Package: pkgName,
-					Doc:     doc,
-					File:    filePath,
-					Line:    line,
-					Methods: make([]InterfaceMethod, 0),
+				iface := InterfaceInfo{
+					Name:       typeSpec.Name.Name,
+					Package:    pkgName,
+					Doc:        doc,
+					File:       filePath,
+					Line:       line,
+					TypeParams: extractTypeParams(typeSpec.TypeParams),
+					Methods:    make([]InterfaceMethod, 0),
 				}
 
 				if t.Methods != nil {
 					for _, m := range t.Methods.List {
-						ft, ok := m.Type.(*ast.FuncType)
-						if !ok || len(m.Names) == 0 {
+						ft, isFunc := m.Type.(*ast.FuncType)
+						if !isFunc || len(m.Names) == 0 {
+							if name := strings.TrimPrefix(exprToString(m.Type), "*"); name != "" && name != "unknown" {
+								iface.Embeds = append(iface.Embeds, name)
+							}
 							continue
 						}
-
-						methodName := m.Names[0].Name
-						params := make([]string, 0)
-						if ft.Params != nil {
-							for _, p := range ft.Params.List {
-								ptype := exprToString(p.Type)
-								if len(p.Names) > 0 {
-									for _, n := range p.Names {
-										params = append(params, fmt.Sprintf("%s %s", n.Name, ptype))
-									}
-								} else {
-									params = append(params, ptype)
-								}
-							}
-						}
-
-						returns := make([]string, 0)
-						if ft.Results != nil {
-							for _, r := range ft.Results.List {
-								rtype := exprToString(r.Type)
-								returns = append(returns, rtype)
-							}
-						}
-
-						ifInfo.Methods = append(ifInfo.Methods, InterfaceMethod{
-							Name:    methodName,
-							Params:  params,
-							Returns: returns,
-							Doc:     cleanDoc(m.Doc),
-						})
+						iface.Methods = append(iface.Methods, buildInterfaceMethod(m.Names[0].Name, ft, cleanDoc(m.Doc)))
 					}
 				}
-				symbols.Interfaces = append(symbols.Interfaces, ifInfo)
+
+				symbols.Interfaces = append(symbols.Interfaces, iface)
 			}
 		}
-		return true
-	})
+	}
+}
+
+func extractTypeParams(fields *ast.FieldList) []string {
+	if fields == nil {
+		return nil
+	}
+	var params []string
+	for _, f := range fields.List {
+		constraint := exprToString(f.Type)
+		for _, name := range f.Names {
+			params = append(params, name.Name+" "+constraint)
+		}
+	}
+	return params
+}
+
+func extractFields(fields *ast.FieldList) []FieldInfo {
+	result := make([]FieldInfo, 0)
+	if fields == nil {
+		return result
+	}
+
+	for _, field := range fields.List {
+		typeStr := exprToString(field.Type)
+
+		rawTag := ""
+		tagMap := map[string]string{}
+		if field.Tag != nil {
+			rawTag = strings.Trim(field.Tag.Value, "`")
+			tagMap = parseStructTags(rawTag)
+		}
+
+		if len(field.Names) == 0 {
+			result = append(result, FieldInfo{
+				Name:       strings.TrimPrefix(typeStr, "*"),
+				Type:       typeStr,
+				Tag:        rawTag,
+				ParsedTags: tagMap,
+				Doc:        cleanDoc(field.Doc),
+				Embedded:   true,
+			})
+			continue
+		}
+
+		for _, name := range field.Names {
+			result = append(result, FieldInfo{
+				Name:       name.Name,
+				Type:       typeStr,
+				Tag:        rawTag,
+				ParsedTags: tagMap,
+				Doc:        cleanDoc(field.Doc),
+			})
+		}
+	}
+
+	return result
+}
+
+func buildInterfaceMethod(name string, ft *ast.FuncType, doc string) InterfaceMethod {
+	method := InterfaceMethod{
+		Name:       name,
+		Doc:        doc,
+		Params:     make([]string, 0),
+		Returns:    make([]string, 0),
+		ParamNames: make([]string, 0),
+		ParamTypes: make([]string, 0),
+	}
+
+	if ft.Params != nil {
+		for _, p := range ft.Params.List {
+			typeStr := exprToString(p.Type)
+			if _, isEllipsis := p.Type.(*ast.Ellipsis); isEllipsis {
+				method.Variadic = true
+			}
+
+			if len(p.Names) == 0 {
+				method.Params = append(method.Params, typeStr)
+				method.ParamTypes = append(method.ParamTypes, typeStr)
+				method.ParamNames = append(method.ParamNames, fmt.Sprintf("arg%d", len(method.ParamNames)))
+				continue
+			}
+			for _, n := range p.Names {
+				method.Params = append(method.Params, fmt.Sprintf("%s %s", n.Name, typeStr))
+				method.ParamTypes = append(method.ParamTypes, typeStr)
+				method.ParamNames = append(method.ParamNames, n.Name)
+			}
+		}
+	}
+
+	if ft.Results != nil {
+		for _, r := range ft.Results.List {
+			typeStr := exprToString(r.Type)
+			count := len(r.Names)
+			if count == 0 {
+				count = 1
+			}
+			for i := 0; i < count; i++ {
+				method.Returns = append(method.Returns, typeStr)
+			}
+		}
+	}
+
+	return method
 }
 
 func extractReceiverName(expr ast.Expr) string {
@@ -305,8 +447,7 @@ func parseStructTags(raw string) map[string]string {
 		"form", "uri", "env", "header", "param", "bson", "dynamodbav", "csv", "redis",
 	}
 	for _, k := range keys {
-		val := st.Get(k)
-		if val != "" {
+		if val := st.Get(k); val != "" {
 			tags[k] = val
 		}
 	}
@@ -329,7 +470,10 @@ func exprToString(expr ast.Expr) string {
 	case *ast.MapType:
 		return fmt.Sprintf("map[%s]%s", exprToString(t.Key), exprToString(t.Value))
 	case *ast.InterfaceType:
-		return "any"
+		if t.Methods == nil || len(t.Methods.List) == 0 {
+			return "any"
+		}
+		return "interface{...}"
 	case *ast.Ellipsis:
 		return "..." + exprToString(t.Elt)
 	case *ast.ParenExpr:
@@ -337,44 +481,72 @@ func exprToString(expr ast.Expr) string {
 	case *ast.IndexExpr:
 		return fmt.Sprintf("%s[%s]", exprToString(t.X), exprToString(t.Index))
 	case *ast.IndexListExpr:
-		var indices []string
+		indices := make([]string, 0, len(t.Indices))
 		for _, idx := range t.Indices {
 			indices = append(indices, exprToString(idx))
 		}
 		return fmt.Sprintf("%s[%s]", exprToString(t.X), strings.Join(indices, ", "))
 	case *ast.ChanType:
-		if t.Dir == ast.RECV {
+		switch t.Dir {
+		case ast.RECV:
 			return "<-chan " + exprToString(t.Value)
-		} else if t.Dir == ast.SEND {
+		case ast.SEND:
 			return "chan<- " + exprToString(t.Value)
+		default:
+			return "chan " + exprToString(t.Value)
 		}
-		return "chan " + exprToString(t.Value)
 	case *ast.FuncType:
-		var params []string
-		if t.Params != nil {
-			for _, p := range t.Params.List {
-				params = append(params, exprToString(p.Type))
-			}
-		}
-		var returns []string
-		if t.Results != nil {
-			for _, r := range t.Results.List {
-				returns = append(returns, exprToString(r.Type))
-			}
-		}
-		retStr := strings.Join(returns, ", ")
-		if len(returns) > 1 {
-			retStr = "(" + retStr + ")"
-		}
-		if retStr != "" {
-			return fmt.Sprintf("func(%s) %s", strings.Join(params, ", "), retStr)
-		}
-		return fmt.Sprintf("func(%s)", strings.Join(params, ", "))
+		return funcTypeToString(t)
 	case *ast.StructType:
 		return "struct{...}"
+	case *ast.BasicLit:
+		return t.Value
+	case *ast.BinaryExpr:
+		return exprToString(t.X) + " " + t.Op.String() + " " + exprToString(t.Y)
+	case *ast.UnaryExpr:
+		return t.Op.String() + exprToString(t.X)
 	default:
 		return "unknown"
 	}
+}
+
+func funcTypeToString(t *ast.FuncType) string {
+	var params []string
+	if t.Params != nil {
+		for _, p := range t.Params.List {
+			typeStr := exprToString(p.Type)
+			count := len(p.Names)
+			if count == 0 {
+				count = 1
+			}
+			for i := 0; i < count; i++ {
+				params = append(params, typeStr)
+			}
+		}
+	}
+
+	var returns []string
+	if t.Results != nil {
+		for _, r := range t.Results.List {
+			typeStr := exprToString(r.Type)
+			count := len(r.Names)
+			if count == 0 {
+				count = 1
+			}
+			for i := 0; i < count; i++ {
+				returns = append(returns, typeStr)
+			}
+		}
+	}
+
+	retStr := strings.Join(returns, ", ")
+	if len(returns) > 1 {
+		retStr = "(" + retStr + ")"
+	}
+	if retStr != "" {
+		return fmt.Sprintf("func(%s) %s", strings.Join(params, ", "), retStr)
+	}
+	return fmt.Sprintf("func(%s)", strings.Join(params, ", "))
 }
 
 func cleanDoc(docGroup *ast.CommentGroup) string {
@@ -389,8 +561,4 @@ func cleanDoc(docGroup *ast.CommentGroup) string {
 		lines = append(lines, strings.TrimSpace(text))
 	}
 	return strings.Join(lines, "\n")
-}
-
-func isGeneratedFile(file *ast.File) bool {
-	return IsGeneratedAST(file)
 }

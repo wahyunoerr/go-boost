@@ -122,95 +122,65 @@ func (d *Detector) processRequireLine(line string, stack *ProjectStack) {
 		Indirect: indirect,
 	})
 
-	if strings.Contains(pkgName, "github.com/gin-gonic/gin") {
-		stack.Framework = "gin"
-		stack.FrameworkVersion = version
-	} else if strings.Contains(pkgName, "github.com/gofiber/fiber") {
-		stack.Framework = "fiber"
-		stack.FrameworkVersion = version
-	} else if strings.Contains(pkgName, "github.com/labstack/echo") {
-		stack.Framework = "echo"
-		stack.FrameworkVersion = version
-	} else if strings.Contains(pkgName, "github.com/go-chi/chi") {
-		stack.Framework = "chi"
-		stack.FrameworkVersion = version
-	} else if strings.Contains(pkgName, "github.com/gorilla/mux") {
-		stack.Framework = "gorilla/mux"
-		stack.FrameworkVersion = version
-	} else if strings.Contains(pkgName, "github.com/zeromicro/go-zero") {
-		stack.Framework = "go-zero"
+	if indirect {
+		return
+	}
+
+	if framework, ok := matchModule(pkgName, frameworkModules); ok {
+		stack.Framework = framework
 		stack.FrameworkVersion = version
 	}
 
-	if strings.Contains(pkgName, "gorm.io/gorm") {
-		stack.ORM = "gorm"
-		stack.ORMVersion = version
-	} else if strings.Contains(pkgName, "github.com/uptrace/bun") {
-		stack.ORM = "bun"
-		stack.ORMVersion = version
-	} else if strings.Contains(pkgName, "github.com/jmoiron/sqlx") {
-		stack.ORM = "sqlx"
-		stack.ORMVersion = version
-	} else if strings.Contains(pkgName, "entgo.io/ent") {
-		stack.ORM = "ent"
-		stack.ORMVersion = version
-	} else if strings.Contains(pkgName, "github.com/sqlc-dev/sqlc") {
-		stack.ORM = "sqlc"
-		stack.ORMVersion = version
-	} else if strings.Contains(pkgName, "github.com/jackc/pgx") {
-		if stack.ORM == "database/sql" {
-			stack.ORM = "pgx"
+	if orm, ok := matchModule(pkgName, ormModules); ok {
+		if orm != "pgx" || stack.ORM == "database/sql" {
+			stack.ORM = orm
 			stack.ORMVersion = version
 		}
 	}
 
-	if strings.Contains(pkgName, "postgres") || strings.Contains(pkgName, "pq") || strings.Contains(pkgName, "pgx") {
-		stack.DatabaseEngine = "postgres"
-	} else if strings.Contains(pkgName, "mysql") {
-		stack.DatabaseEngine = "mysql"
-	} else if strings.Contains(pkgName, "sqlite") {
-		stack.DatabaseEngine = "sqlite"
+	if engine, ok := matchModule(pkgName, databaseModules); ok {
+		stack.DatabaseEngine = engine
 	}
 
-	if strings.Contains(pkgName, "github.com/redis/go-redis") || strings.Contains(pkgName, "github.com/go-redis/redis") {
+	if hasModulePrefix(pkgName, "github.com/redis/go-redis") || hasModulePrefix(pkgName, "github.com/go-redis/redis") {
 		stack.CacheEngine = "redis"
-	} else if strings.Contains(pkgName, "github.com/bradfitz/gomemcache") {
+	} else if hasModulePrefix(pkgName, "github.com/bradfitz/gomemcache") {
 		stack.CacheEngine = "memcached"
 	}
 
-	if strings.Contains(pkgName, "github.com/segmentio/kafka-go") || strings.Contains(pkgName, "github.com/confluentinc/confluent-kafka-go") || strings.Contains(pkgName, "github.com/IBM/sarama") {
+	if hasModulePrefix(pkgName, "github.com/segmentio/kafka-go") || hasModulePrefix(pkgName, "github.com/confluentinc/confluent-kafka-go") || hasModulePrefix(pkgName, "github.com/IBM/sarama") {
 		stack.QueueEngine = "kafka"
-	} else if strings.Contains(pkgName, "github.com/rabbitmq/amqp091-go") || strings.Contains(pkgName, "github.com/streadway/amqp") {
+	} else if hasModulePrefix(pkgName, "github.com/rabbitmq/amqp091-go") || hasModulePrefix(pkgName, "github.com/streadway/amqp") {
 		stack.QueueEngine = "rabbitmq"
-	} else if strings.Contains(pkgName, "github.com/nats-io/nats.go") {
+	} else if hasModulePrefix(pkgName, "github.com/nats-io/nats.go") {
 		stack.QueueEngine = "nats"
 	}
 
-	if strings.Contains(pkgName, "github.com/spf13/viper") {
+	if hasModulePrefix(pkgName, "github.com/spf13/viper") {
 		stack.ConfigManager = "viper"
-	} else if strings.Contains(pkgName, "github.com/kelseyhightower/envconfig") || strings.Contains(pkgName, "github.com/caarlos0/env") {
+	} else if hasModulePrefix(pkgName, "github.com/kelseyhightower/envconfig") || hasModulePrefix(pkgName, "github.com/caarlos0/env") {
 		stack.ConfigManager = "envconfig"
-	} else if strings.Contains(pkgName, "github.com/joho/godotenv") && stack.ConfigManager == "none" {
+	} else if hasModulePrefix(pkgName, "github.com/joho/godotenv") && stack.ConfigManager == "none" {
 		stack.ConfigManager = "godotenv"
 	}
 
-	if strings.Contains(pkgName, "google.golang.org/grpc") {
+	if hasModulePrefix(pkgName, "google.golang.org/grpc") {
 		stack.RPC = "grpc"
 	}
 
-	if strings.Contains(pkgName, "go.uber.org/zap") {
+	if hasModulePrefix(pkgName, "go.uber.org/zap") {
 		stack.Logger = "zap"
-	} else if strings.Contains(pkgName, "github.com/rs/zerolog") {
+	} else if hasModulePrefix(pkgName, "github.com/rs/zerolog") {
 		stack.Logger = "zerolog"
-	} else if strings.Contains(pkgName, "github.com/sirupsen/logrus") {
+	} else if hasModulePrefix(pkgName, "github.com/sirupsen/logrus") {
 		stack.Logger = "logrus"
 	}
 
-	if strings.Contains(pkgName, "go-playground/validator") {
+	if hasModulePrefix(pkgName, "github.com/go-playground/validator") {
 		stack.Validator = "validator.v10"
 	}
 
-	if strings.Contains(pkgName, "github.com/stretchr/testify") {
+	if hasModulePrefix(pkgName, "github.com/stretchr/testify") {
 		stack.TestFramework = "testify"
 	}
 }
@@ -248,4 +218,56 @@ func (d *Detector) inferArchitecture(stack *ProjectStack) {
 	}
 
 	stack.Architecture = "standard_flat"
+}
+
+var frameworkModules = []moduleMatch{
+	{"github.com/gin-gonic/gin", "gin"},
+	{"github.com/gofiber/fiber", "fiber"},
+	{"github.com/labstack/echo", "echo"},
+	{"github.com/go-chi/chi", "chi"},
+	{"github.com/gorilla/mux", "gorilla/mux"},
+	{"github.com/zeromicro/go-zero", "go-zero"},
+}
+
+var ormModules = []moduleMatch{
+	{"gorm.io/gorm", "gorm"},
+	{"github.com/uptrace/bun", "bun"},
+	{"github.com/jmoiron/sqlx", "sqlx"},
+	{"entgo.io/ent", "ent"},
+	{"github.com/sqlc-dev/sqlc", "sqlc"},
+	{"github.com/jackc/pgx", "pgx"},
+}
+
+var databaseModules = []moduleMatch{
+	{"github.com/lib/pq", "postgres"},
+	{"github.com/jackc/pgx", "postgres"},
+	{"github.com/jackc/pgconn", "postgres"},
+	{"gorm.io/driver/postgres", "postgres"},
+	{"github.com/go-sql-driver/mysql", "mysql"},
+	{"gorm.io/driver/mysql", "mysql"},
+	{"github.com/mattn/go-sqlite3", "sqlite"},
+	{"modernc.org/sqlite", "sqlite"},
+	{"gorm.io/driver/sqlite", "sqlite"},
+	{"go.mongodb.org/mongo-driver", "mongodb"},
+}
+
+type moduleMatch struct {
+	prefix string
+	value  string
+}
+
+func matchModule(pkgName string, candidates []moduleMatch) (string, bool) {
+	for _, c := range candidates {
+		if hasModulePrefix(pkgName, c.prefix) {
+			return c.value, true
+		}
+	}
+	return "", false
+}
+
+func hasModulePrefix(pkgName, prefix string) bool {
+	if pkgName == prefix {
+		return true
+	}
+	return strings.HasPrefix(pkgName, prefix+"/")
 }
