@@ -238,3 +238,69 @@ func TestInitDoesNotCreateGitignoreWhereNoneExists(t *testing.T) {
 		t.Error("go-boost should not introduce a .gitignore into a project that has none")
 	}
 }
+
+func TestMCPConfigIsPortableWhenInstalledAsGoTool(t *testing.T) {
+	dir, res := initProject(t, map[string]string{
+		"go.mod": "module example.com/app\n\ngo 1.24\n\ntool github.com/wahyunoerr/go-boost/cmd/go-boost\n",
+	})
+
+	if !res.PortableConfig {
+		t.Error("a project with the tool directive should get a portable config")
+	}
+
+	raw := readFile(t, filepath.Join(dir, ".mcp.json"))
+	if strings.Contains(raw, "/usr/local/bin/go-boost") {
+		t.Errorf("config still hardcodes a machine-specific path:\n%s", raw)
+	}
+
+	var config map[string]map[string]map[string]any
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	entry := config["mcpServers"]["go-boost"]
+	if entry["command"] != "go" {
+		t.Errorf("command = %v, want go", entry["command"])
+	}
+	args, _ := json.Marshal(entry["args"])
+	if string(args) != `["tool","go-boost","mcp"]` {
+		t.Errorf("args = %s, want [tool go-boost mcp]", args)
+	}
+}
+
+func TestMCPConfigFallsBackToAbsolutePathWhenNotInstalled(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	dir, res := initProject(t, map[string]string{})
+
+	if res.PortableConfig {
+		t.Error("without the tool directive or a binary on PATH the config cannot be portable")
+	}
+	if !strings.Contains(readFile(t, filepath.Join(dir, ".mcp.json")), "/usr/local/bin/go-boost") {
+		t.Error("expected the absolute path fallback")
+	}
+}
+
+func TestGuidelinesDescribeTheProjectsRealLayout(t *testing.T) {
+	dir, _ := initProject(t, map[string]string{
+		"cmd/api/main.go":         "package main\n\nfunc main() {}\n",
+		"cmd/worker/main.go":      "package main\n\nfunc main() {}\n",
+		"app/controllers/user.go": "package controllers\n",
+		"app/storage/user.go":     "package storage\n",
+		"migrations/001_init.sql": "CREATE TABLE users (id int);",
+	})
+
+	body := readFile(t, filepath.Join(dir, "AGENTS.md"))
+
+	for _, want := range []string{
+		"## Project Layout",
+		"`./cmd/api`",
+		"`./cmd/worker`",
+		"`app/controllers`",
+		"`app/storage`",
+		"`migrations`",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("generated guidelines omit %q:\n%s", want, body)
+		}
+	}
+}

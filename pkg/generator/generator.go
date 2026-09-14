@@ -16,6 +16,7 @@ type InitResult struct {
 	UpdatedFiles   []string `json:"updated_files"`
 	SkippedFiles   []string `json:"skipped_files"`
 	InstalledSkill []string `json:"installed_skills"`
+	PortableConfig bool     `json:"portable_config"`
 }
 
 const serverKey = "go-boost"
@@ -34,13 +35,16 @@ func GenerateProjectArtifacts(rootDir string, binaryPath string) (*InitResult, e
 		InstalledSkill: make([]string, 0),
 	}
 
-	if err := mergeMCPConfig(filepath.Join(rootDir, ".mcp.json"), "mcpServers", binaryPath, result); err != nil {
+	invocation := ResolveMCPInvocation(rootDir, binaryPath)
+	result.PortableConfig = invocation.Portable
+
+	if err := mergeMCPConfig(filepath.Join(rootDir, ".mcp.json"), "mcpServers", invocation, result); err != nil {
 		return nil, err
 	}
-	if err := mergeMCPConfig(filepath.Join(rootDir, ".cursor", "mcp.json"), "mcpServers", binaryPath, result); err != nil {
+	if err := mergeMCPConfig(filepath.Join(rootDir, ".cursor", "mcp.json"), "mcpServers", invocation, result); err != nil {
 		return nil, err
 	}
-	if err := mergeMCPConfig(filepath.Join(rootDir, ".vscode", "mcp.json"), "servers", binaryPath, result); err != nil {
+	if err := mergeMCPConfig(filepath.Join(rootDir, ".vscode", "mcp.json"), "servers", invocation, result); err != nil {
 		return nil, err
 	}
 
@@ -92,7 +96,7 @@ func detectMainPackage(rootDir string) string {
 	return "."
 }
 
-func mergeMCPConfig(path, key, binaryPath string, result *InitResult) error {
+func mergeMCPConfig(path, key string, invocation MCPInvocation, result *InitResult) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -110,7 +114,7 @@ func mergeMCPConfig(path, key, binaryPath string, result *InitResult) error {
 	if servers == nil {
 		servers = map[string]any{}
 	}
-	servers[serverKey] = mcpServerEntry(binaryPath)
+	servers[serverKey] = invocation.entry()
 	config[key] = servers
 
 	data, err := json.MarshalIndent(config, "", "  ")
