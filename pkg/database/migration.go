@@ -52,8 +52,11 @@ func GenerateMigrationScaffold(ctx context.Context, conn *DBConnection, rootDir 
 				goType := fieldTypes[strings.ToLower(col)]
 				colType := mapGoTypeToSQL(goType, col)
 
-				upStmts = append(upStmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s;", d.TableName, col, colType))
-				downStmts = append(downStmts, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s;", d.TableName, col))
+				table := quoteSQLIdentifier(d.TableName)
+				column := quoteSQLIdentifier(col)
+
+				upStmts = append(upStmts, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s;", table, column, colType))
+				downStmts = append(downStmts, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s;", table, column))
 			}
 		}
 	}

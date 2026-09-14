@@ -1,19 +1,137 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/wahyunoerr/go-boost/pkg/astparser"
 	"github.com/wahyunoerr/go-boost/pkg/database"
 	"github.com/wahyunoerr/go-boost/pkg/detector"
+	"github.com/wahyunoerr/go-boost/pkg/diagnostics"
 	"github.com/wahyunoerr/go-boost/pkg/generator"
 	"github.com/wahyunoerr/go-boost/pkg/logs"
 	"github.com/wahyunoerr/go-boost/pkg/runner"
 	"github.com/wahyunoerr/go-boost/pkg/security"
 )
+
+const (
+	defaultDiagnoseTimeout = 30 * time.Second
+	maxDiagnoseTimeout     = 5 * time.Minute
+
+	maxToolOutputBytes = 16 * 1024
+	maxLogEntries      = 1000
+)
+
+func resolveRunCommand(rootDir, cmdStr string) ([]string, error) {
+	if strings.TrimSpace(cmdStr) != "" {
+		args, err := splitCommandLine(cmdStr)
+		if err != nil {
+			return nil, err
+		}
+		if len(args) == 0 {
+			return nil, fmt.Errorf("command is empty")
+		}
+		return args, nil
+	}
+
+	if hasMakeTarget(filepath.Join(rootDir, "Makefile"), "run") {
+		return []string{"make", "run"}, nil
+	}
+	return []string{"go", "run", DetectMainEntry(rootDir)}, nil
+}
+
+func splitCommandLine(input string) ([]string, error) {
+	var args []string
+	var current strings.Builder
+	var quote rune
+	hasCurrent := false
+
+	for _, r := range input {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				current.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote = r
+			hasCurrent = true
+		case r == ' ' || r == '\t' || r == '\n':
+			if hasCurrent || current.Len() > 0 {
+				args = append(args, current.String())
+				current.Reset()
+				hasCurrent = false
+			}
+		default:
+			current.WriteRune(r)
+			hasCurrent = true
+		}
+	}
+
+	if quote != 0 {
+		return nil, fmt.Errorf("unbalanced quote in command")
+	}
+	if hasCurrent || current.Len() > 0 {
+		args = append(args, current.String())
+	}
+	return args, nil
+}
+
+func hasMakeTarget(makefilePath, target string) bool {
+	content, err := os.ReadFile(makefilePath)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			continue
+		}
+		name, _, found := strings.Cut(line, ":")
+		if !found {
+			continue
+		}
+		for _, candidate := range strings.Fields(name) {
+			if candidate == target {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func DetectMainEntry(rootDir string) string {
+	cmdDir := filepath.Join(rootDir, "cmd")
+	if entries, err := os.ReadDir(cmdDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				return "./cmd/" + e.Name()
+			}
+		}
+	}
+	if _, err := os.Stat(filepath.Join(rootDir, "main.go")); err == nil {
+		return "."
+	}
+	return "."
+}
+
+func tailOutput(out string) string {
+	out = strings.TrimSpace(out)
+	if len(out) <= maxToolOutputBytes {
+		return out
+	}
+	tail := out[len(out)-maxToolOutputBytes:]
+	if idx := strings.IndexByte(tail, '\n'); idx >= 0 && idx < len(tail)-1 {
+		tail = tail[idx+1:]
+	}
+	return fmt.Sprintf("... [truncated %d earlier bytes]\n%s", len(out)-len(tail), tail)
+}
 
 func RegisterAllTools(s *Server, rootDir string) {
 	s.RegisterTool(Tool{
@@ -237,6 +355,9 @@ func RegisterAllTools(s *Server, rootDir string) {
 		maxEntries := 50
 		if num, ok := args["entries"].(float64); ok && num > 0 {
 			maxEntries = int(num)
+			if maxEntries > maxLogEntries {
+				maxEntries = maxLogEntries
+			}
 		}
 		entries, err := logs.ReadEntries(rootDir, maxEntries)
 		if err != nil {
@@ -608,4 +729,110 @@ func RegisterAllTools(s *Server, rootDir string) {
 			Content: []Content{NewTextContent(string(data))},
 		}, nil
 	})
+
+	s.RegisterTool(Tool{
+		Name:        "diagnose_run",
+		Description: "Execute a command (e.g. 'go run ./cmd/app' or 'make run') under go-boost live supervision and immediately diagnose any compile error, runtime panic, port conflict, or crash with exact source code snippets and actionable fixes. The command is stopped once the timeout elapses, so it is safe to point at a long-running server.",
+		InputSchema: ToolSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"command": {
+					Type:        "string",
+					Description: "Command to execute (e.g. 'make run', 'go run ./cmd/api'). Defaults to 'make run' if the Makefile has a run target, otherwise 'go run' against the detected main package.",
+				},
+				"timeout_seconds": {
+					Type:        "integer",
+					Description: "How long to supervise the command before stopping it. Defaults to 30, maximum 300.",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*CallToolResult, error) {
+		cmdStr, _ := args["command"].(string)
+		cmdArgs, err := resolveRunCommand(rootDir, cmdStr)
+		if err != nil {
+			return nil, err
+		}
+
+		timeout := defaultDiagnoseTimeout
+		if secs, ok := args["timeout_seconds"].(float64); ok && secs > 0 {
+			timeout = time.Duration(secs) * time.Second
+			if timeout > maxDiagnoseTimeout {
+				timeout = maxDiagnoseTimeout
+			}
+		}
+
+		var captured bytes.Buffer
+		res, runErr := runner.SuperviseCommand(ctx, rootDir, cmdArgs, runner.SuperviseOptions{
+			Stdout:  &captured,
+			Stderr:  &captured,
+			Timeout: timeout,
+		})
+		if res == nil {
+			return nil, runErr
+		}
+
+		if res.Report != nil {
+			data, _ := json.MarshalIndent(res.Report, "", "  ")
+			return &CallToolResult{
+				Content: []Content{
+					NewTextContent(diagnostics.RenderDiagnosticBox(res.Report)),
+					NewTextContent(string(data)),
+				},
+				IsError: !res.Succeeded,
+			}, nil
+		}
+
+		if res.TimedOut {
+			return &CallToolResult{
+				Content: []Content{NewTextContent(fmt.Sprintf(
+					"Command was still running after %s and was stopped.\nThis is expected for a server. Output captured so far:\n\n%s",
+					timeout, tailOutput(captured.String())))},
+			}, nil
+		}
+
+		if runErr != nil {
+			return &CallToolResult{
+				Content: []Content{NewTextContent(fmt.Sprintf(
+					"Command exited with code %d: %v\n\nOutput:\n%s",
+					res.ExitCode, runErr, tailOutput(captured.String())))},
+				IsError: true,
+			}, nil
+		}
+
+		return &CallToolResult{
+			Content: []Content{NewTextContent("Command executed successfully without any errors or panics.\n\n" + tailOutput(captured.String()))},
+		}, nil
+	})
+}
+
+type projectCompletionSource struct {
+	rootDir string
+}
+
+func NewCompletionSource(rootDir string) CompletionSource {
+	return &projectCompletionSource{rootDir: rootDir}
+}
+
+func (p *projectCompletionSource) Connections() []string {
+	conns, err := database.DiscoverConnections(p.rootDir)
+	if err != nil || conns == nil {
+		return nil
+	}
+	names := make([]string, 0, len(conns.Connections))
+	for _, c := range conns.Connections {
+		names = append(names, c.Name)
+	}
+	return names
+}
+
+func (p *projectCompletionSource) Interfaces() []string {
+	symbols, err := astparser.ParsePath(p.rootDir)
+	if err != nil || symbols == nil {
+		return nil
+	}
+	names := make([]string, 0, len(symbols.Interfaces))
+	for _, i := range symbols.Interfaces {
+		names = append(names, i.Name)
+	}
+	return names
 }

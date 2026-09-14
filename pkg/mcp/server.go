@@ -9,8 +9,14 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"sync"
+)
+
+const (
+	maxMessageBytes    = 16 * 1024 * 1024
+	maxConcurrentCalls = 8
 )
 
 type ToolHandler func(ctx context.Context, args map[string]any) (*CallToolResult, error)
@@ -30,7 +36,6 @@ type Server struct {
 	promptHandlers   map[string]PromptHandler
 	resources        map[string]Resource
 	resourceHandlers map[string]ResourceHandler
-	subscriptions    map[string]bool
 	logLevel         string
 
 	in     io.Reader
@@ -38,8 +43,20 @@ type Server struct {
 	logger *log.Logger
 
 	writeMu     sync.Mutex
-	initialized bool
 	mu          sync.RWMutex
+	initialized bool
+
+	inflight   map[string]context.CancelFunc
+	inflightMu sync.Mutex
+	slots      chan struct{}
+	wg         sync.WaitGroup
+
+	completionSource CompletionSource
+}
+
+type CompletionSource interface {
+	Connections() []string
+	Interfaces() []string
 }
 
 type Option func(*Server)
@@ -63,6 +80,12 @@ func WithInstructions(instructions string) Option {
 	}
 }
 
+func WithCompletionSource(source CompletionSource) Option {
+	return func(s *Server) {
+		s.completionSource = source
+	}
+}
+
 func NewServer(name, version string, opts ...Option) *Server {
 	s := &Server{
 		name:             name,
@@ -73,11 +96,12 @@ func NewServer(name, version string, opts ...Option) *Server {
 		promptHandlers:   make(map[string]PromptHandler),
 		resources:        make(map[string]Resource),
 		resourceHandlers: make(map[string]ResourceHandler),
-		subscriptions:    make(map[string]bool),
 		logLevel:         "info",
 		in:               os.Stdin,
 		out:              os.Stdout,
 		logger:           log.New(os.Stderr, fmt.Sprintf("[%s] ", name), log.LstdFlags),
+		inflight:         make(map[string]context.CancelFunc),
+		slots:            make(chan struct{}, maxConcurrentCalls),
 	}
 
 	for _, opt := range opts {
@@ -117,47 +141,115 @@ func (s *Server) Log(format string, v ...any) {
 func (s *Server) Serve(ctx context.Context) error {
 	s.Log("MCP Server started (%s v%s)", s.name, s.version)
 
-	scanner := bufio.NewScanner(s.in)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-	buf := make([]byte, 1024*1024)
-	scanner.Buffer(buf, 16*1024*1024)
+	lines := make(chan []byte)
+	readErr := make(chan error, 1)
+
+	go func() {
+		defer close(lines)
+		reader := bufio.NewReaderSize(s.in, 64*1024)
+		for {
+			line, err := readMessage(reader)
+			if len(line) > 0 {
+				select {
+				case lines <- line:
+				case <-ctx.Done():
+					return
+				}
+			}
+			if err != nil {
+				if err != io.EOF {
+					readErr <- err
+				}
+				return
+			}
+		}
+	}()
 
 	for {
 		select {
 		case <-ctx.Done():
+			s.wg.Wait()
 			return ctx.Err()
-		default:
-		}
-
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				return fmt.Errorf("read error: %w", err)
+		case line, ok := <-lines:
+			if !ok {
+				s.wg.Wait()
+				select {
+				case err := <-readErr:
+					return fmt.Errorf("read error: %w", err)
+				default:
+					return nil
+				}
 			}
-			return nil
+			s.handleRawMessage(ctx, line)
 		}
+	}
+}
 
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
+func readMessage(reader *bufio.Reader) ([]byte, error) {
+	var buf bytes.Buffer
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		if len(chunk) > 0 && buf.Len() < maxMessageBytes {
+			buf.Write(chunk)
+		}
+		if err == bufio.ErrBufferFull {
 			continue
 		}
-
-		s.handleRawMessage(ctx, line)
+		return bytes.TrimSpace(buf.Bytes()), err
 	}
 }
 
 func (s *Server) handleRawMessage(ctx context.Context, raw []byte) {
-	var req Request
-	if err := json.Unmarshal(raw, &req); err != nil {
+	if len(raw) == 0 {
+		return
+	}
+
+	var probe struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Method  string          `json:"method"`
+		Params  json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
 		s.sendError(nil, ErrCodeParseError, "Parse error: invalid JSON", err.Error())
 		return
 	}
 
-	if req.ID == nil {
-		s.handleNotification(ctx, &req)
+	if probe.Method == "" {
+		if probe.ID != nil {
+			s.sendError(rawID(probe.ID), ErrCodeInvalidRequest, "Invalid request: missing method", nil)
+		}
 		return
 	}
 
-	s.handleRequest(ctx, &req)
+	req := &Request{
+		JSONRPC: probe.JSONRPC,
+		Method:  probe.Method,
+		Params:  probe.Params,
+		ID:      rawID(probe.ID),
+		rawID:   probe.ID,
+	}
+
+	if probe.ID == nil || string(probe.ID) == "null" {
+		s.handleNotification(ctx, req)
+		return
+	}
+
+	s.dispatchRequest(ctx, req)
+}
+
+func rawID(id json.RawMessage) any {
+	if id == nil {
+		return nil
+	}
+	var value any
+	if err := json.Unmarshal(id, &value); err != nil {
+		return nil
+	}
+	return value
 }
 
 func (s *Server) handleNotification(_ context.Context, req *Request) {
@@ -168,10 +260,70 @@ func (s *Server) handleNotification(_ context.Context, req *Request) {
 		s.mu.Unlock()
 		s.Log("Client confirmed initialization")
 	case "notifications/cancelled":
-		s.Log("Client cancelled request: %s", string(req.Params))
+		var params struct {
+			RequestID json.RawMessage `json:"requestId"`
+			Reason    string          `json:"reason"`
+		}
+		if err := json.Unmarshal(req.Params, &params); err == nil {
+			s.cancelRequest(string(params.RequestID))
+			s.Log("Cancelled request %s: %s", string(params.RequestID), params.Reason)
+		}
 	default:
 		s.Log("Ignored notification: %s", req.Method)
 	}
+}
+
+func (s *Server) cancelRequest(id string) {
+	s.inflightMu.Lock()
+	cancel, ok := s.inflight[id]
+	s.inflightMu.Unlock()
+	if ok {
+		cancel()
+	}
+}
+
+func (s *Server) dispatchRequest(ctx context.Context, req *Request) {
+	if req.Method == "initialize" || req.Method == "ping" {
+		s.handleRequest(ctx, req)
+		return
+	}
+
+	s.mu.RLock()
+	ready := s.initialized
+	s.mu.RUnlock()
+	if !ready {
+		s.Log("Request %s arrived before initialization completed", req.Method)
+	}
+
+	if !isLongRunning(req.Method) {
+		s.handleRequest(ctx, req)
+		return
+	}
+
+	callCtx, cancel := context.WithCancel(ctx)
+	key := string(req.rawID)
+
+	s.inflightMu.Lock()
+	s.inflight[key] = cancel
+	s.inflightMu.Unlock()
+
+	s.wg.Add(1)
+	s.slots <- struct{}{}
+	go func() {
+		defer func() {
+			<-s.slots
+			s.inflightMu.Lock()
+			delete(s.inflight, key)
+			s.inflightMu.Unlock()
+			cancel()
+			s.wg.Done()
+		}()
+		s.handleRequest(callCtx, req)
+	}()
+}
+
+func isLongRunning(method string) bool {
+	return method == "tools/call" || method == "resources/read"
 }
 
 func (s *Server) handleRequest(ctx context.Context, req *Request) {
@@ -184,12 +336,12 @@ func (s *Server) handleRequest(ctx context.Context, req *Request) {
 		protocolVersion := NegotiateProtocolVersion(params.ProtocolVersion)
 		s.Log("Client connected: %s (version: %s, negotiated protocol: %s)", params.ClientInfo.Name, params.ClientInfo.Version, protocolVersion)
 
-		result := InitializeResult{
+		s.sendResult(req.ID, InitializeResult{
 			ProtocolVersion: protocolVersion,
 			Capabilities: ServerCaps{
-				Tools:       &ToolsCapability{ListChanged: true},
-				Prompts:     &PromptsCapability{ListChanged: true},
-				Resources:   &ResourcesCapability{Subscribe: true, ListChanged: true},
+				Tools:       &ToolsCapability{},
+				Prompts:     &PromptsCapability{},
+				Resources:   &ResourcesCapability{},
 				Logging:     &LoggingCapability{},
 				Completions: &CompletionsCapability{},
 			},
@@ -198,8 +350,7 @@ func (s *Server) handleRequest(ctx context.Context, req *Request) {
 				Version: s.version,
 			},
 			Instructions: s.instructions,
-		}
-		s.sendResult(req.ID, result)
+		})
 
 	case "ping":
 		s.sendResult(req.ID, map[string]any{})
@@ -212,6 +363,7 @@ func (s *Server) handleRequest(ctx context.Context, req *Request) {
 		}
 		s.mu.RUnlock()
 
+		sort.Slice(toolsList, func(i, j int) bool { return toolsList[i].Name < toolsList[j].Name })
 		s.sendResult(req.ID, ListToolsResult{Tools: toolsList})
 
 	case "tools/call":
@@ -240,6 +392,10 @@ func (s *Server) handleRequest(ctx context.Context, req *Request) {
 			})
 			return
 		}
+		if result == nil {
+			s.sendResult(req.ID, CallToolResult{Content: []Content{}})
+			return
+		}
 
 		s.sendResult(req.ID, result)
 
@@ -251,6 +407,7 @@ func (s *Server) handleRequest(ctx context.Context, req *Request) {
 		}
 		s.mu.RUnlock()
 
+		sort.Slice(promptsList, func(i, j int) bool { return promptsList[i].Name < promptsList[j].Name })
 		s.sendResult(req.ID, ListPromptsResult{Prompts: promptsList})
 
 	case "prompts/get":
@@ -284,6 +441,7 @@ func (s *Server) handleRequest(ctx context.Context, req *Request) {
 		}
 		s.mu.RUnlock()
 
+		sort.Slice(resourcesList, func(i, j int) bool { return resourcesList[i].URI < resourcesList[j].URI })
 		s.sendResult(req.ID, ListResourcesResult{Resources: resourcesList})
 
 	case "resources/read":
@@ -316,10 +474,7 @@ func (s *Server) handleRequest(ctx context.Context, req *Request) {
 			return
 		}
 
-		s.mu.RLock()
 		completions := s.generateCompletions(params)
-		s.mu.RUnlock()
-
 		s.sendResult(req.ID, CompleteResult{
 			Completion: CompletionDetails{
 				Values:  completions,
@@ -328,35 +483,17 @@ func (s *Server) handleRequest(ctx context.Context, req *Request) {
 			},
 		})
 
-	case "resources/subscribe":
-		var params SubscribeParams
-		if len(req.Params) > 0 {
-			_ = json.Unmarshal(req.Params, &params)
-		}
-		s.mu.Lock()
-		s.subscriptions[params.URI] = true
-		s.mu.Unlock()
-		s.Log("Client subscribed to resource: %s", params.URI)
-		s.sendResult(req.ID, map[string]any{})
-
-	case "resources/unsubscribe":
-		var params SubscribeParams
-		if len(req.Params) > 0 {
-			_ = json.Unmarshal(req.Params, &params)
-		}
-		s.mu.Lock()
-		delete(s.subscriptions, params.URI)
-		s.mu.Unlock()
-		s.Log("Client unsubscribed from resource: %s", params.URI)
-		s.sendResult(req.ID, map[string]any{})
-
 	case "logging/setLevel":
 		var params SetLogLevelParams
 		if len(req.Params) > 0 {
 			_ = json.Unmarshal(req.Params, &params)
 		}
+		if !isValidLogLevel(params.Level) {
+			s.sendError(req.ID, ErrCodeInvalidParams, fmt.Sprintf("Unsupported log level: %s", params.Level), nil)
+			return
+		}
 		s.mu.Lock()
-		s.logLevel = params.Level
+		s.logLevel = strings.ToLower(params.Level)
 		s.mu.Unlock()
 		s.Log("Log level set to: %s", params.Level)
 		s.sendResult(req.ID, map[string]any{})
@@ -366,36 +503,63 @@ func (s *Server) handleRequest(ctx context.Context, req *Request) {
 	}
 }
 
+var logLevelRank = map[string]int{
+	"debug": 0, "info": 1, "notice": 2, "warning": 3,
+	"error": 4, "critical": 5, "alert": 6, "emergency": 7,
+}
+
+func isValidLogLevel(level string) bool {
+	_, ok := logLevelRank[strings.ToLower(level)]
+	return ok
+}
+
+func (s *Server) LogMessage(level, message string) {
+	s.mu.RLock()
+	current := s.logLevel
+	initialized := s.initialized
+	s.mu.RUnlock()
+
+	if !initialized {
+		return
+	}
+	if logLevelRank[strings.ToLower(level)] < logLevelRank[current] {
+		return
+	}
+
+	_ = s.SendNotification("notifications/message", map[string]any{
+		"level":  strings.ToLower(level),
+		"logger": s.name,
+		"data":   message,
+	})
+}
+
 func (s *Server) sendResult(id any, result any) {
-	resp := Response{
+	s.writeJSON(Response{
 		JSONRPC: JSONRPCVersion,
 		ID:      id,
 		Result:  result,
-	}
-	s.writeJSON(resp)
+	})
 }
 
 func (s *Server) sendError(id any, code int, message string, data any) {
-	resp := Response{
+	s.writeJSON(Response{
 		JSONRPC: JSONRPCVersion,
 		ID:      id,
 		Error:   NewRPCError(code, message, data),
-	}
-	s.writeJSON(resp)
+	})
 }
 
 func (s *Server) writeJSON(v any) {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-
 	data, err := json.Marshal(v)
 	if err != nil {
 		s.Log("Error marshaling response: %v", err)
 		return
 	}
+	data = append(data, '\n')
 
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	_, _ = s.out.Write(data)
-	_, _ = s.out.Write([]byte("\n"))
 }
 
 func executeToolSafely(handler ToolHandler, ctx context.Context, args map[string]any) (res *CallToolResult, err error) {
@@ -429,30 +593,47 @@ func (s *Server) generateCompletions(params CompleteParams) []string {
 	var candidates []string
 	val := strings.ToLower(params.Argument.Value)
 
-	if params.Ref.Type == "ref/tool" {
+	switch params.Ref.Type {
+	case "ref/tool":
 		switch params.Argument.Name {
 		case "connection":
-			candidates = []string{"default", "postgres", "mysql", "sqlite"}
+			candidates = s.connectionCandidates()
 		case "package":
 			candidates = []string{"./...", "./cmd/...", "./pkg/...", "./internal/..."}
 		case "path":
 			candidates = []string{"./internal/domain", "./internal/repository", "./internal/service", "./internal/handler", "./pkg", "./cmd"}
 		case "symbol":
 			candidates = []string{"net/http.Client", "context.Context", "sync.Mutex", "fmt.Sprintf", "database/sql.DB", "log/slog.Info"}
+		case "interface":
+			candidates = s.interfaceCandidates()
 		}
-	} else if params.Ref.Type == "ref/prompt" {
+	case "ref/prompt":
 		candidates = []string{"symbol", "file", "feature", "package"}
 	}
 
-	var results []string
+	results := make([]string, 0, len(candidates))
 	cleanVal := strings.TrimPrefix(val, "./")
 	for _, c := range candidates {
 		cleanC := strings.TrimPrefix(strings.ToLower(c), "./")
-		if strings.HasPrefix(cleanC, cleanVal) || strings.Contains(strings.ToLower(c), val) || val == "" {
+		if val == "" || strings.HasPrefix(cleanC, cleanVal) || strings.Contains(strings.ToLower(c), val) {
 			results = append(results, c)
 		}
 	}
 	return results
+}
+
+func (s *Server) connectionCandidates() []string {
+	if s.completionSource == nil {
+		return []string{"default"}
+	}
+	return s.completionSource.Connections()
+}
+
+func (s *Server) interfaceCandidates() []string {
+	if s.completionSource == nil {
+		return nil
+	}
+	return s.completionSource.Interfaces()
 }
 
 func (s *Server) SendNotification(method string, params any) error {
@@ -465,13 +646,11 @@ func (s *Server) SendNotification(method string, params any) error {
 		raw = data
 	}
 
-	notif := Notification{
+	s.writeJSON(Notification{
 		JSONRPC: JSONRPCVersion,
 		Method:  method,
 		Params:  raw,
-	}
-
-	s.writeJSON(notif)
+	})
 	return nil
 }
 

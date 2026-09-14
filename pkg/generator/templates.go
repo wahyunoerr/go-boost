@@ -1,50 +1,73 @@
 package generator
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/wahyunoerr/go-boost/pkg/detector"
 )
 
+const (
+	guidelineBeginMarker = "<!-- BEGIN go-boost generated guidelines -->"
+	guidelineEndMarker   = "<!-- END go-boost generated guidelines -->"
+	rulesBeginMarker     = "# BEGIN go-boost generated rules"
+	rulesEndMarker       = "# END go-boost generated rules"
+)
+
+type Skill struct {
+	Name        string
+	Description string
+	Body        string
+	AppliesTo   func(stack *detector.ProjectStack) bool
+}
+
+func (s Skill) Render() string {
+	var sb strings.Builder
+	sb.WriteString("---\n")
+	sb.WriteString("name: " + s.Name + "\n")
+	sb.WriteString("description: " + s.Description + "\n")
+	sb.WriteString("---\n\n")
+	sb.WriteString(strings.TrimRight(s.Body, "\n"))
+	sb.WriteString("\n")
+	return sb.String()
+}
+
 func GenerateAgentsMD(stack *detector.ProjectStack) string {
+	return guidelineBeginMarker + "\n" + generateGuidelines(stack) + guidelineEndMarker + "\n"
+}
+
+func generateGuidelines(stack *detector.ProjectStack) string {
 	var sb strings.Builder
 
 	sb.WriteString("# Go Project Engineering Guidelines (go-boost)\n\n")
 	sb.WriteString(fmt.Sprintf("This project `%s` is powered by **Go %s** and **go-boost**.\n\n", stack.ModuleName, stack.GoVersion))
 
 	sb.WriteString("## Detected Stack Architecture\n")
-	sb.WriteString(fmt.Sprintf("- **Framework**: `%s` (v%s)\n", stack.Framework, stack.FrameworkVersion))
-	sb.WriteString(fmt.Sprintf("- **ORM / Database Layer**: `%s` (v%s)\n", stack.ORM, stack.ORMVersion))
-	sb.WriteString(fmt.Sprintf("- **Database Engine**: `%s`\n", stack.DatabaseEngine))
-	if stack.CacheEngine != "" && stack.CacheEngine != "none" {
+	sb.WriteString(fmt.Sprintf("- **Framework**: %s\n", formatDetected(stack.Framework, stack.FrameworkVersion)))
+	sb.WriteString(fmt.Sprintf("- **ORM / Database Layer**: %s\n", formatDetected(stack.ORM, stack.ORMVersion)))
+	sb.WriteString(fmt.Sprintf("- **Database Engine**: %s\n", formatDetected(stack.DatabaseEngine, "")))
+	if isDetected(stack.CacheEngine) {
 		sb.WriteString(fmt.Sprintf("- **Cache Engine**: `%s`\n", stack.CacheEngine))
 	}
-	if stack.QueueEngine != "" && stack.QueueEngine != "none" {
+	if isDetected(stack.QueueEngine) {
 		sb.WriteString(fmt.Sprintf("- **Queue Engine**: `%s`\n", stack.QueueEngine))
 	}
-	if stack.RPC != "" && stack.RPC != "none" {
+	if isDetected(stack.RPC) {
 		sb.WriteString(fmt.Sprintf("- **RPC**: `%s`\n", stack.RPC))
 	}
-	if stack.ConfigManager != "" && stack.ConfigManager != "none" {
+	if isDetected(stack.ConfigManager) {
 		sb.WriteString(fmt.Sprintf("- **Config Manager**: `%s`\n", stack.ConfigManager))
 	}
-	sb.WriteString(fmt.Sprintf("- **Logger**: `%s`\n", stack.Logger))
+	sb.WriteString(fmt.Sprintf("- **Logger**: %s\n", formatDetected(stack.Logger, "")))
 	sb.WriteString(fmt.Sprintf("- **Architecture**: `%s`\n\n", stack.Architecture))
 
 	sb.WriteString("## Available MCP Tools via `go-boost`\n")
-	sb.WriteString("You have access to the `go-boost` MCP server with 11 native tools:\n")
-	sb.WriteString("1. `app_info`: Call upfront to see complete project metadata & packages.\n")
-	sb.WriteString("2. `ast_inspect`: Deeply inspect Go structs, interfaces, and field tags (`json`, `gorm`, `validate`).\n")
-	sb.WriteString("3. `route_list`: Statically view all registered HTTP endpoints and handlers.\n")
-	sb.WriteString("4. `db_schema`: Inspect database tables, column types, keys, and foreign relations.\n")
-	sb.WriteString("5. `db_query`: Execute safe, read-only SQL queries (`SELECT`, `SHOW`, `EXPLAIN`).\n")
-	sb.WriteString("6. `db_connections`: Discover configured databases.\n")
-	sb.WriteString("7. `read_logs`: Read and parse application logs (`slog`, `zap`, `zerolog`).\n")
-	sb.WriteString("8. `last_error`: Get stack traces of recent backend errors or panics.\n")
-	sb.WriteString("9. `test_runner`: Run targeted Go unit tests and view structured failure diagnostics.\n")
-	sb.WriteString("10. `go_doc`: Check official Go stdlib or third-party symbol documentation.\n")
-	sb.WriteString("11. `code_check`: Run `go vet` to ensure generated code compiles cleanly.\n\n")
+	sb.WriteString(fmt.Sprintf("You have access to the `go-boost` MCP server with %d native tools:\n", len(ToolCatalog)))
+	for i, tool := range ToolCatalog {
+		sb.WriteString(fmt.Sprintf("%d. `%s`: %s\n", i+1, tool.Name, tool.Summary))
+	}
+	sb.WriteString("\n")
 
 	sb.WriteString("## Go Coding Standards & Best Practices\n")
 	sb.WriteString("- **Context Propagation**: Always pass `ctx context.Context` as the very first parameter to I/O functions, handlers, and repositories.\n")
@@ -53,16 +76,35 @@ func GenerateAgentsMD(stack *detector.ProjectStack) string {
 	sb.WriteString("  - Inspect errors using `errors.Is(err, target)` and `errors.As(err, &target)`.\n")
 	sb.WriteString("  - Never ignore returned errors with `_` unless explicitly justified.\n")
 	sb.WriteString("- **Modern Go Idioms** (Go 1.22+):\n")
-	sb.WriteString("  - Standard loop variable scoping (each iteration creates a new variable; no closure leaks).\n")
-	sb.WriteString("  - Standard `slices` and `maps` packages over manual loops where readable.\n")
-	if stack.Logger == "slog" {
-		sb.WriteString("  - Use structured logging via `log/slog`: `slog.InfoContext(ctx, \"...\", \"key\", val)`.\n")
-	} else if stack.Logger == "zap" {
+	sb.WriteString("  - Loop variables are scoped per iteration; do not write `x := x` copies.\n")
+	sb.WriteString("  - Prefer the standard `slices` and `maps` packages over hand-written loops where readable.\n")
+	switch stack.Logger {
+	case "zap":
 		sb.WriteString("  - Use Uber Zap structured logging: `logger.Info(\"...\", zap.String(\"key\", val))`.\n")
+	case "zerolog":
+		sb.WriteString("  - Use zerolog structured logging: `log.Info().Str(\"key\", val).Msg(\"...\")`.\n")
+	case "logrus":
+		sb.WriteString("  - Use logrus structured logging: `log.WithField(\"key\", val).Info(\"...\")`.\n")
+	default:
+		sb.WriteString("  - Use structured logging via `log/slog`: `slog.InfoContext(ctx, \"...\", \"key\", val)`.\n")
 	}
 	sb.WriteString("- **Testing**: Write idiomatic table-driven tests with `t.Run(tc.name, func(t *testing.T) { ... })`.\n")
 
 	return sb.String()
+}
+
+func isDetected(value string) bool {
+	return value != "" && value != "none" && value != "unknown"
+}
+
+func formatDetected(value, version string) string {
+	if !isDetected(value) {
+		return "`" + value + "` (not detected in go.mod; assumed default)"
+	}
+	if version != "" {
+		return fmt.Sprintf("`%s` (%s)", value, version)
+	}
+	return "`" + value + "`"
 }
 
 func GenerateClaudeMD(stack *detector.ProjectStack) string {
@@ -70,7 +112,7 @@ func GenerateClaudeMD(stack *detector.ProjectStack) string {
 }
 
 func GenerateCursorRules(stack *detector.ProjectStack) string {
-	return fmt.Sprintf(`Cursor Rules: %s (Go %s)
+	body := fmt.Sprintf(`Cursor Rules: %s (Go %s)
 You are an expert Go backend engineer working on this %s application.
 Architecture: %s | Web Framework: %s | ORM: %s | Logger: %s
 
@@ -86,129 +128,261 @@ Rules:
 3. Handle every error; wrap with '%%w'.
 4. Write table-driven unit tests.
 `, stack.ModuleName, stack.GoVersion, stack.Framework, stack.Architecture, stack.Framework, stack.ORM, stack.Logger)
+
+	return rulesBeginMarker + "\n" + body + rulesEndMarker + "\n"
 }
 
 func GenerateMCPConfigJSON(binaryPath string) string {
 	if binaryPath == "" {
 		binaryPath = "go-boost"
 	}
-	return fmt.Sprintf(`{
-  "mcpServers": {
-    "go-boost": {
-      "command": "%s",
-      "args": ["mcp"]
-    }
-  }
-}
-`, binaryPath)
-}
 
-var BuiltinSkills = map[string]string{
-	"go-clean-architecture": `# Skill: Go Clean Architecture Pattern
-
-Use this skill when developing or refactoring features in projects following Clean / Hexagonal Architecture in Go.
-
-## Architectural Layers (Dependency Rule points inwards)
-1. **Domain / Entity Layer** (\x60internal/domain\x60):
-   - Pure business models and entities without external framework dependencies.
-   - Domain errors and repository interface contracts.
-2. **Repository Layer** (\x60internal/repository\x60):
-   - Implements domain repository interfaces.
-   - Manages database interactions (GORM, SQLX, Bun, standard sql).
-   - Translates database records into domain entities.
-3. **Usecase / Service Layer** (\x60internal/usecase\x60 or \x60internal/service\x60):
-   - Business workflow orchestration and transaction management.
-   - Independent of transport protocols (HTTP/gRPC/CLI).
-4. **Delivery / Handler Layer** (\x60internal/handler\x60 or \x60internal/delivery\x60):
-   - HTTP request parsing, DTO binding, and response serialization.
-   - Calls usecases with \x60ctx\x60.
-`,
-
-	"go-table-tests": `# Skill: Go Table-Driven Tests Pattern
-
-Use this skill when writing or refactoring unit and integration tests in Go.
-
-## Standard Pattern
-\x60\x60\x60go
-func TestService_Action(t *testing.T) {
-	tests := []struct {
-		name      string
-		input     InputDTO
-		mockSetup func(m *MockRepo)
-		want      *OutputDTO
-		wantErr   bool
-		errTarget error
-	}{
-		{
-			name: "success case",
-			input: InputDTO{ID: 1},
-			mockSetup: func(m *MockRepo) {
-				m.On("FindByID", mock.Anything, uint(1)).Return(&Entity{ID: 1}, nil)
-			},
-			want: &OutputDTO{ID: 1},
-			wantErr: false,
-		},
-		{
-			name: "not found case",
-			input: InputDTO{ID: 99},
-			mockSetup: func(m *MockRepo) {
-				m.On("FindByID", mock.Anything, uint(99)).Return(nil, ErrNotFound)
-			},
-			want: nil,
-			wantErr: true,
-			errTarget: ErrNotFound,
+	config := map[string]any{
+		"mcpServers": map[string]any{
+			"go-boost": mcpServerEntry(binaryPath),
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-		})
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return "{}"
+	}
+	return string(data) + "\n"
+}
+
+func GenerateVSCodeMCPConfigJSON(binaryPath string) string {
+	if binaryPath == "" {
+		binaryPath = "go-boost"
+	}
+
+	config := map[string]any{
+		"servers": map[string]any{
+			"go-boost": mcpServerEntry(binaryPath),
+		},
+	}
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return "{}"
+	}
+	return string(data) + "\n"
+}
+
+func mcpServerEntry(binaryPath string) map[string]any {
+	return map[string]any{
+		"command": binaryPath,
+		"args":    []string{"mcp"},
 	}
 }
-\x60\x60\x60
-`,
 
-	"go-concurrency-safety": `# Skill: Go Concurrency & Goroutine Safety
+func GenerateMakefile(mainPackage string) string {
+	if mainPackage == "" {
+		mainPackage = "."
+	}
+	return fmt.Sprintf(`.PHONY: run test check bench mcp
 
-Use this skill when implementing concurrent code, worker pools, background tasks, or caching in Go.
+run:
+	@go-boost run go run %s
 
-## Rules & Patterns
-1. **Never leak goroutines**: Every spawned goroutine must have a deterministic termination path via \x60ctx.Done()\x60 or channel close.
-2. **Use errgroup for fan-out / fan-in**:
-   \x60\x60\x60go
-   g, ctx := errgroup.WithContext(ctx)
-   for _, item := range items {
-       item := item
-       g.Go(func() error {
-           return process(ctx, item)
-       })
-   }
-   if err := g.Wait(); err != nil {
-       return err
-   }
-   \x60\x60\x60
-3. **Mutex Hygiene**: Always \x60defer mu.Unlock()\x60 immediately after \x60mu.Lock()\x60.
-4. **Channel Ownership**: The sender/producer owns the channel and is the only one responsible for closing it.
-`,
+test:
+	@go test ./...
 
-	"go-error-handling": `# Skill: Go Idiomatic Error Handling
+check:
+	@go-boost check
 
-Use this skill for error definitions, wrapping, and error matching.
+bench:
+	@go-boost bench
 
-## Guidelines
-1. **Sentinel Errors**: Define sentinel errors as package-level variables:
-   \x60\x60\x60go
-   var ErrUserNotFound = errors.New("user not found")
-   \x60\x60\x60
-2. **Error Wrapping**: Wrap errors with context using \x60%w\x60:
-   \x60\x60\x60go
-   if err != nil {
-       return fmt.Errorf("find user %d: %w", id, err)
-   }
-   \x60\x60\x60
-3. **Error Matching**: Always use \x60errors.Is\x60 and \x60errors.As\x60:
-   \x60\x60\x60go
-   if errors.Is(err, ErrUserNotFound) { ... }
-   \x60\x60\x60
-`,
+mcp:
+	@go-boost mcp
+`, mainPackage)
+}
+
+type ToolSummary struct {
+	Name    string
+	Summary string
+}
+
+var ToolCatalog = []ToolSummary{
+	{"app_info", "Call upfront to see complete project metadata and packages."},
+	{"ast_inspect", "Inspect Go structs, interfaces, and field tags (`json`, `gorm`, `db`, `validate`)."},
+	{"route_list", "List every registered HTTP endpoint with its handler and source location."},
+	{"db_connections", "Discover configured databases. Passwords are never returned."},
+	{"db_schema", "Inspect tables, columns, indexes, and foreign keys."},
+	{"db_query", "Run a read-only SQL query. The database is opened read-only, so writes cannot succeed."},
+	{"read_logs", "Read and parse application logs (`slog`, `zap`, `zerolog`, logfmt)."},
+	{"last_error", "Get the most recent backend error or panic with its stack trace."},
+	{"test_runner", "Run targeted Go tests and get structured failure diagnostics."},
+	{"go_doc", "Look up Go stdlib or third-party symbol documentation."},
+	{"code_check", "Run `go vet` to verify code compiles cleanly."},
+	{"find_implementations", "Find which structs implement a given interface."},
+	{"concurrency_check", "Detect context leaks, mutex leaks, and unsupervised goroutines."},
+	{"schema_struct_diff", "Compare database columns against Go struct tags."},
+	{"bench_runner", "Run benchmarks with allocation profiling."},
+	{"security_scan", "Detect SQL injection, hardcoded secrets, command injection, and insecure TLS."},
+	{"mock_generate", "Generate a compilable pure-Go mock for an interface."},
+	{"openapi_generate", "Generate an OpenAPI 3.0 specification from discovered routes."},
+	{"migration_generate", "Generate SQL migrations from schema and struct differences."},
+	{"deadcode_detect", "Detect unreferenced structs, functions, and interfaces."},
+	{"diagnose_run", "Run a command under supervision and diagnose crashes, with a timeout."},
+}
+
+var BuiltinSkills = []Skill{
+	{
+		Name:        "go-error-handling",
+		Description: "Define, wrap, and match errors idiomatically in Go, including sentinel errors and custom error types.",
+		AppliesTo:   func(stack *detector.ProjectStack) bool { return true },
+		Body: "# Go Idiomatic Error Handling\n\n" +
+			"## When to use this skill\n" +
+			"Use this skill when defining errors, wrapping them across layers, or deciding how a caller should inspect a failure.\n\n" +
+			"## Guidelines\n" +
+			"1. **Sentinel errors** are package-level variables:\n" +
+			"```go\n" +
+			"var ErrUserNotFound = errors.New(\"user not found\")\n" +
+			"```\n" +
+			"2. **Wrap with context** using `%w` so the chain stays inspectable:\n" +
+			"```go\n" +
+			"if err != nil {\n" +
+			"    return fmt.Errorf(\"find user %d: %w\", id, err)\n" +
+			"}\n" +
+			"```\n" +
+			"3. **Match with `errors.Is` and `errors.As`**, never by comparing strings:\n" +
+			"```go\n" +
+			"if errors.Is(err, ErrUserNotFound) {\n" +
+			"    return status.NotFound()\n" +
+			"}\n\n" +
+			"var validationErr *ValidationError\n" +
+			"if errors.As(err, &validationErr) {\n" +
+			"    return status.BadRequest(validationErr.Field)\n" +
+			"}\n" +
+			"```\n" +
+			"4. **Do not log and return** the same error; pick one so it is reported once.\n" +
+			"5. **Never discard an error** with `_` unless you write down why it is safe.\n",
+	},
+	{
+		Name:        "go-table-tests",
+		Description: "Write table-driven Go tests with subtests, including error cases and mock setup.",
+		AppliesTo:   func(stack *detector.ProjectStack) bool { return true },
+		Body: "# Go Table-Driven Tests\n\n" +
+			"## When to use this skill\n" +
+			"Use this skill when writing or refactoring unit and integration tests.\n\n" +
+			"## Standard pattern\n" +
+			"```go\n" +
+			"func TestService_Action(t *testing.T) {\n" +
+			"\ttests := []struct {\n" +
+			"\t\tname      string\n" +
+			"\t\tinput     InputDTO\n" +
+			"\t\tsetupMock func(m *MockRepo)\n" +
+			"\t\twant      *OutputDTO\n" +
+			"\t\twantErr   error\n" +
+			"\t}{\n" +
+			"\t\t{\n" +
+			"\t\t\tname:  \"returns the stored entity\",\n" +
+			"\t\t\tinput: InputDTO{ID: 1},\n" +
+			"\t\t\tsetupMock: func(m *MockRepo) {\n" +
+			"\t\t\t\tm.FindByIDFunc = func(ctx context.Context, id uint) (*Entity, error) {\n" +
+			"\t\t\t\t\treturn &Entity{ID: 1}, nil\n" +
+			"\t\t\t\t}\n" +
+			"\t\t\t},\n" +
+			"\t\t\twant: &OutputDTO{ID: 1},\n" +
+			"\t\t},\n" +
+			"\t\t{\n" +
+			"\t\t\tname:  \"propagates a not-found error\",\n" +
+			"\t\t\tinput: InputDTO{ID: 99},\n" +
+			"\t\t\tsetupMock: func(m *MockRepo) {\n" +
+			"\t\t\t\tm.FindByIDFunc = func(ctx context.Context, id uint) (*Entity, error) {\n" +
+			"\t\t\t\t\treturn nil, ErrNotFound\n" +
+			"\t\t\t\t}\n" +
+			"\t\t\t},\n" +
+			"\t\t\twantErr: ErrNotFound,\n" +
+			"\t\t},\n" +
+			"\t}\n\n" +
+			"\tfor _, tc := range tests {\n" +
+			"\t\tt.Run(tc.name, func(t *testing.T) {\n" +
+			"\t\t\trepo := NewMockRepo()\n" +
+			"\t\t\tif tc.setupMock != nil {\n" +
+			"\t\t\t\ttc.setupMock(repo)\n" +
+			"\t\t\t}\n\n" +
+			"\t\t\tgot, err := NewService(repo).Action(context.Background(), tc.input)\n" +
+			"\t\t\tif !errors.Is(err, tc.wantErr) {\n" +
+			"\t\t\t\tt.Fatalf(\"err = %v, want %v\", err, tc.wantErr)\n" +
+			"\t\t\t}\n" +
+			"\t\t\tif diff := cmp.Diff(tc.want, got); diff != \"\" {\n" +
+			"\t\t\t\tt.Errorf(\"unexpected result (-want +got):\\n%s\", diff)\n" +
+			"\t\t\t}\n" +
+			"\t\t})\n" +
+			"\t}\n" +
+			"}\n" +
+			"```\n\n" +
+			"## Rules\n" +
+			"- Name each case after the behaviour it proves, not after the input.\n" +
+			"- Always assert the error, not only the happy path value.\n" +
+			"- Use `t.Parallel()` only when the cases share no mutable state.\n" +
+			"- Generate mocks with the go-boost `mock_generate` tool.\n",
+	},
+	{
+		Name:        "go-concurrency-safety",
+		Description: "Write goroutines, worker pools, and shared state in Go without leaks or data races.",
+		AppliesTo:   func(stack *detector.ProjectStack) bool { return true },
+		Body: "# Go Concurrency and Goroutine Safety\n\n" +
+			"## When to use this skill\n" +
+			"Use this skill when spawning goroutines, building worker pools, or sharing state between them.\n\n" +
+			"## Rules\n" +
+			"1. **Every goroutine needs a termination path** through `ctx.Done()` or a closed channel. A goroutine with no exit is a leak.\n" +
+			"2. **Use errgroup for fan-out** so failures propagate and the caller can wait:\n" +
+			"```go\n" +
+			"g, ctx := errgroup.WithContext(ctx)\n" +
+			"for _, item := range items {\n" +
+			"    g.Go(func() error {\n" +
+			"        return process(ctx, item)\n" +
+			"    })\n" +
+			"}\n" +
+			"if err := g.Wait(); err != nil {\n" +
+			"    return err\n" +
+			"}\n" +
+			"```\n" +
+			"Since Go 1.22 each iteration has its own loop variable, so no `item := item` copy is needed.\n" +
+			"3. **Pair every `Lock` with a deferred `Unlock`** on the next line. A manual `Unlock` is skipped by every early return:\n" +
+			"```go\n" +
+			"mu.Lock()\n" +
+			"defer mu.Unlock()\n" +
+			"```\n" +
+			"4. **The sender owns the channel** and is the only party that closes it.\n" +
+			"5. **Always `defer cancel()`** after `context.WithTimeout` or `context.WithCancel`, or the timer leaks until it fires.\n" +
+			"6. **Run tests with `-race`** before trusting concurrent code.\n\n" +
+			"## Verification\n" +
+			"Run the go-boost `concurrency_check` tool to find context leaks, mutex leaks, and unsupervised goroutines.\n",
+	},
+	{
+		Name:        "go-clean-architecture",
+		Description: "Structure features across domain, repository, usecase, and delivery layers in a Clean or Hexagonal Go codebase.",
+		AppliesTo: func(stack *detector.ProjectStack) bool {
+			return stack.Architecture == "clean_architecture" || stack.Architecture == "hexagonal"
+		},
+		Body: "# Go Clean Architecture\n\n" +
+			"## When to use this skill\n" +
+			"Use this skill when adding or refactoring a feature in a project that follows Clean or Hexagonal Architecture.\n\n" +
+			"## Layers, with dependencies pointing inwards\n" +
+			"1. **Domain** (`internal/domain`): business entities, sentinel errors, and the repository interfaces the inner layers own. No framework imports.\n" +
+			"2. **Repository** (`internal/repository`): implements the domain interfaces, talks to the database, and maps rows to entities.\n" +
+			"3. **Usecase** (`internal/usecase` or `internal/service`): orchestrates business rules and transaction boundaries. Knows nothing about HTTP or gRPC.\n" +
+			"4. **Delivery** (`internal/handler` or `internal/delivery`): parses requests into DTOs, calls a usecase with `ctx`, and serialises the response.\n\n" +
+			"## Rules\n" +
+			"- The interface belongs to the layer that consumes it, not the one that implements it.\n" +
+			"- A domain entity never carries `json` or `gorm` tags; map to a DTO or a persistence model instead.\n" +
+			"- A handler never touches the database directly.\n" +
+			"- Pass `ctx context.Context` as the first argument across every boundary.\n\n" +
+			"## Verification\n" +
+			"Run the go-boost `find_implementations` tool to confirm a struct satisfies the domain interface it claims to.\n",
+	},
+}
+
+func SkillsFor(stack *detector.ProjectStack) []Skill {
+	var selected []Skill
+	for _, skill := range BuiltinSkills {
+		if skill.AppliesTo == nil || skill.AppliesTo(stack) {
+			selected = append(selected, skill)
+		}
+	}
+	return selected
 }

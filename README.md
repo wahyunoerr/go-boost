@@ -22,7 +22,7 @@
 ## Table of Contents
 - [Architecture and Advantages](#architecture-and-advantages)
 - [Key Features](#key-features)
-- [20 Built-in MCP Tools](#20-built-in-mcp-tools)
+- [21 Built-in MCP Tools](#21-built-in-mcp-tools)
 - [Interactive MCP Prompts](#interactive-mcp-prompts)
 - [Dynamic MCP Resources](#dynamic-mcp-resources)
 - [How Tools Run When go-boost Is Activated](#how-tools-run-when-go-boost-is-activated)
@@ -55,7 +55,7 @@
 4. **Static Concurrency Hazard Detection**: Audits AST patterns for goroutine leaks, context timer leaks (missing defer cancel), and mutex lock hygiene.
 5. **Schema vs Struct Diff Engine**: Compares live database schemas against Go struct tags (`db`, `gorm`, `json`) to identify schema desynchronizations.
 6. **Automatic Multi-Stack Detection**: Identifies web frameworks (Gin, Fiber, Echo, Chi, gorilla/mux, go-zero, `net/http`), ORM/data access layers (GORM, Bun, SQLX, Ent, sqlc, pgx), caching engines (Redis, Memcached), message brokers (Kafka, RabbitMQ, NATS), RPC (gRPC), configuration libraries (Viper, envconfig), loggers (`slog`, `zap`, `zerolog`), and directory architecture patterns.
-7. **Execution Safety**: Database tools restrict queries to strictly read-only statements (`SELECT`, `SHOW`, `EXPLAIN`, `DESCRIBE`, `PRAGMA`) with automated row capping and timeouts.
+7. **Execution Safety**: Database tools accept only read-only statements (`SELECT`, `WITH`, `SHOW`, `EXPLAIN`, `DESCRIBE`, `PRAGMA`) and, in addition, open the database itself in a read-only mode, so a statement that slips past validation still cannot write. Row capping and timeouts apply on top.
 8. **Zero External Dependencies**: Adds zero third-party dependencies to your project `go.mod`.
 
 ---
@@ -71,17 +71,18 @@
 - **Interface Mock & Test Scaffolding**: Automatically generates thread-safe mock structs for Go interfaces.
 - **Static Security Auditing**: Identifies SQL injection, hardcoded secrets, and TLS hazards in Go source code.
 - **OpenAPI 3.0 Generation**: Scans AST route trees and DTO structs to generate OpenAPI specifications.
-- **AI Guidelines Generator**: Generates tailored `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, and `.ai/skills/*` modules based on your project stack.
+- **AI Guidelines Generator**: Generates tailored `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, and `.cursorrules`, and installs Agent Skills into `.claude/skills/*` based on your project stack. Existing content you wrote is preserved.
 
 ---
 
-## 20 Built-in MCP Tools
+## 21 Built-in MCP Tools
 
-The `go-boost` MCP server exposes 20 native tools:
+The `go-boost` MCP server exposes 21 native tools:
 
 | Tool Name | Category | Description | Parameters |
 | :--- | :--- | :--- | :--- |
-| `app_info` | Stack Detection | Retrieves comprehensive project metadata: Go version, module name, framework, ORM, database engine, logger, architecture, and installed packages. | None |
+| `diagnose_run` | Diagnostics | Supervises an application or make command and produces instant root-cause diagnostics with code snippets upon crash or error. The command is stopped when the timeout elapses, so pointing it at a long-running server is safe. | `command` (string, optional), `timeout_seconds` (integer, optional, default 30, max 300) |
+| `app_info` | Metadata | Analyzes go.mod and AST to extract complete stack metadata, frameworks, ORM, database, logger, and architecture. | None |
 | `ast_inspect` | AST & Models | Statically inspects struct declarations, field tags, interfaces, and method receivers without compiling. | `path` (string, optional) |
 | `find_implementations` | AST & Models | Discovers which structs implement a given interface by computing method sets statically. | `interface` (string, required) |
 | `deadcode_detect` | Code Quality | Statically scans for unreferenced functions, structs, and methods across the codebase. | `path` (string, optional) |
@@ -89,7 +90,7 @@ The `go-boost` MCP server exposes 20 native tools:
 | `route_list` | Routing | Scans registered HTTP endpoints across Gin, Echo, Fiber, Chi, and Go 1.22+ net/http. | None |
 | `db_connections` | Database | Discovers database connection parameters from environment files and local configs. | None |
 | `db_schema` | Database | Inspects database schema in summary mode or detailed filtered table mode. | `summary` (bool), `filter` (string), `connection` (string), `include_views` (bool) |
-| `db_query` | Database | Executes safe, read-only SQL queries (`SELECT`, `SHOW`, `EXPLAIN`). Data mutations are strictly rejected. | `query` (string, required), `connection` (string, optional) |
+| `db_query` | Database | Executes read-only SQL queries (`SELECT`, `WITH`, `SHOW`, `EXPLAIN`). Mutations are rejected by validation and by opening the database read-only. | `query` (string, required), `connection` (string, optional) |
 | `schema_struct_diff` | Database | Compares database table columns against Go struct field tags to pinpoint missing columns and mismatches. | `connection` (string, optional) |
 | `migration_generate` | Scaffolding | Scaffolds timestamped up and down SQL migration files from struct definitions or diffs. | `name` (string, required), `table` (string, optional) |
 | `mock_generate` | Scaffolding | Generates thread-safe mock struct implementations for any Go interface contract. | `interface` (string, required), `package` (string, optional) |
@@ -149,13 +150,13 @@ sequenceDiagram
     Dev->>Client: Opens project workspace or starts prompt
     Client->>Pipe: Spawns "go-boost mcp" subprocess in background
     Pipe->>MCP: Process starts (~8MB RAM, sub-millisecond boot)
-    Client->>MCP: JSON-RPC "initialize" (Protocol: 2026-01-01 / 2024-11-05)
+    Client->>MCP: JSON-RPC "initialize" (Protocol: 2025-11-25 / 2025-06-18 / 2025-03-26 / 2024-11-05)
     MCP-->>Client: Result: capabilities {tools, prompts, resources, completions, logging}
     Client->>MCP: Notification: "notifications/initialized"
 
     Note over Dev, Core: Phase 2: Catalog and Capability Discovery
     Client->>MCP: JSON-RPC "tools/list"
-    MCP-->>Client: Returns 20 native tools with complete JSON Schemas
+    MCP-->>Client: Returns 21 native tools with complete JSON Schemas
     Client->>MCP: JSON-RPC "prompts/list" and "resources/list"
     MCP-->>Client: Returns 4 prompt templates and 4 dynamic resource URIs
     Client->>MCP: JSON-RPC "completion/complete" (Argument Auto-completion)
@@ -245,8 +246,8 @@ sequenceDiagram
 
 1. **Configuration Detection**: The editor reads `.mcp.json`, `.cursor/mcp.json`, `.gemini/antigravity/mcp/go-boost.json`, or `.vscode/mcp.json`. These files define `go-boost` with argument `["mcp"]`.
 2. **Zero-Latency Subprocess Spawn**: The client launches `go-boost mcp` as an isolated background child process. Because `go-boost` is a statically compiled pure Go binary with zero external dependencies, initialization completes in **under 3 milliseconds** with approximately 8 MB memory footprint.
-3. **Adaptive Protocol Handshake & Capability Negotiation**: The client transmits a JSON-RPC `initialize` frame. `go-boost` executes adaptive version negotiation, seamlessly supporting both modern MCP 2026 (`2026-01-01`) and legacy MCP 2024 (`2024-11-05`) clients. It advertises 2026 server capabilities including dynamic tool invalidation (`tools.listChanged`), interactive argument completion (`completions`), live resource subscriptions (`resources.subscribe`), and remote logging control (`logging`). The client acknowledges with `notifications/initialized`.
-4. **Dynamic Catalog Discovery & Argument Completion**: The client queries `tools/list`, `prompts/list`, and `resources/list`. `go-boost` replies with all 20 native tools, complete with JSON Schema validation specifications, prompt templates, and dynamic URI definitions. When an agent types tool arguments, `completion/complete` dynamically autocompletes matching symbol and path candidates.
+3. **Protocol Handshake & Capability Negotiation**: The client transmits a JSON-RPC `initialize` frame. `go-boost` negotiates across the published MCP revisions it supports (`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`), echoing the client's version when it is one of them and otherwise replying with the newest it speaks. It advertises only capabilities it actually implements: tools, prompts, resources, interactive argument completion (`completions`), and logging level control. The client acknowledges with `notifications/initialized`.
+4. **Dynamic Catalog Discovery & Argument Completion**: The client queries `tools/list`, `prompts/list`, and `resources/list`. `go-boost` replies with all 21 native tools in a stable, alphabetically sorted order, complete with JSON Schema validation specifications, prompt templates, and dynamic URI definitions. When an agent types tool arguments, `completion/complete` autocompletes candidates drawn from the project itself, such as its discovered connections and interfaces.
 5. **Autonomous Context Acquisition Loop**: During active developer chat sessions, the AI agent consults `AGENTS.md` and triggers tools autonomously (`tools/call`). `go-boost` inspects Go ASTs or database structures statically, returning contextual answers instantly.
 6. **Stream Separation Guarantee**: All JSON-RPC request and response payloads flow exclusively through `stdin` and `stdout`. Internal engine logs, panic diagnostics, and debug traces are directed strictly to `stderr`. This architectural separation guarantees that stdout is never corrupted by unexpected terminal text or logs.
 
@@ -439,7 +440,7 @@ go-boost init
 This command inspects your codebase, detects frameworks and libraries, and creates:
 - MCP configurations: `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`
 - AI guideline documents: `AGENTS.md`, `CLAUDE.md`, `.cursorrules`
-- Go skill modules in the `.ai/skills/` directory
+- Agent Skills installed into the `.claude/skills/` directory
 
 ### Step 3: View Project Stack Status
 ```bash
@@ -538,6 +539,35 @@ Add this block to `.zed/settings.json`:
 ### `go-boost init`
 Scans the project, generates MCP configurations, and writes tailored AI guidelines and skills.
 
+### `go-boost run [command...]`
+Supervises application or build execution with zero-latency streaming. Upon crash, compilation error, runtime panic, or port conflict, it immediately halts and displays an instant visual diagnostic box showing the exact file, line number, source code snippet with pointer arrow, root cause analysis, and actionable fix:
+```text
+$ go-boost run make run
+========================================================================
+🚨 GO-BOOST INSTANT DIAGNOSTIC: Runtime Panic
+========================================================================
+📍 Location : cmd/api/main.go:45
+💥 Message  : runtime error: invalid memory address or nil pointer dereference
+
+📄 Source Context:
+------------------------------------------------------------------------
+     43 |   cfg, err := config.Load()
+->   45 |   dbVersion := cfg.Database.Version
+     46 |   log.Printf("DB Version: %s", dbVersion)
+------------------------------------------------------------------------
+
+💡 Root Cause:
+   Attempted to read or write a struct field or invoke a method on a pointer that is nil.
+
+🛠️ Suggested Fix:
+   Check if the pointer variable is nil before accessing its fields or methods.
+
+📡 Saved to .go-boost/last_error.json (Synchronized with MCP)
+========================================================================
+```
+
+If run without arguments, `go-boost run` automatically detects `Makefile` with a `run:` target, or locates the application entry point in `cmd/` or `main.go`.
+
 ### `go-boost mcp`
 Runs the standard Model Context Protocol server over `stdio` (JSON-RPC 2.0).
 
@@ -622,6 +652,25 @@ Re-scans dependencies and synchronizes guideline documents and skill files.
 
 ---
 
+## Exit Codes
+
+The analysis commands are usable as CI gates:
+
+| Code | Meaning |
+| :--- | :--- |
+| `0` | Success, and no findings |
+| `1` | The command itself failed (bad arguments, unreadable project, tool error) |
+| `2` | The command ran successfully and reported findings |
+
+`security`, `check`, and `deadcode` return `2` when they find something, so a pipeline step fails without needing to parse output:
+
+```yaml
+- name: Security audit
+  run: go-boost security --format sarif > results.sarif
+```
+
+`go-boost run` propagates the supervised process's own exit code.
+
 ## Context Architecture: Guidelines and Skills
 
 Context is split into two tiers to optimize LLM token usage:
@@ -634,13 +683,15 @@ Stored in `AGENTS.md`, `CLAUDE.md`, and `.cursorrules`. Covers baseline rules:
 - Calling `app_info` and `ast_inspect` at the start of tasks.
 
 ### 2. Skills (Loaded On-Demand)
-Stored in `.ai/skills/{skill-name}/SKILL.md`. Loaded only when working on matching task domains:
+Installed into `.claude/skills/{skill-name}/SKILL.md` in the [Agent Skills format](https://agentskills.io/what-are-skills), each with `name` and `description` frontmatter so the agent loads it only when the task matches:
 - `go-clean-architecture`: Layer separation for Entity, Repository, Usecase, and Delivery.
 - `go-table-tests`: Idiomatic table-driven unit test patterns using `t.Run`.
 - `go-concurrency-safety`: Best practices for goroutine termination, mutex hygiene, and `errgroup`.
 - `go-error-handling`: Patterns for custom errors, sentinel errors, and wrapping.
 
-To add custom skills, create a `.ai/skills/{feature-name}/SKILL.md` file. Running `go-boost update` registers your new skills automatically.
+To add your own skill, create `.ai/skills/{skill-name}/SKILL.md` with `name` and `description` frontmatter. Running `go-boost init` or `go-boost update` installs it alongside the built-in skills. A custom skill whose name matches a built-in one replaces it.
+
+Skills are selected from the detected stack: `go-clean-architecture` is installed only when a layered `internal/` structure is present.
 
 ---
 

@@ -3,6 +3,7 @@ package astparser
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -183,8 +184,186 @@ func (c *Container[K, V]) Get(key K) Result[V] {
 		t.Fatalf("expected 2 structs, got %d", len(symbols.Structs))
 	}
 
-	container := symbols.Structs[1]
+	container := findStruct(t, symbols, "Container")
 	if len(container.Methods) != 1 || container.Methods[0] != "Get" {
 		t.Errorf("expected method 'Get' on Container, got %+v", container.Methods)
+	}
+	if len(container.TypeParams) != 2 {
+		t.Errorf("expected 2 type parameters on Container, got %+v", container.TypeParams)
+	}
+}
+
+func findStruct(t *testing.T, symbols *PackageSymbols, name string) StructInfo {
+	t.Helper()
+	for _, s := range symbols.Structs {
+		if s.Name == name {
+			return s
+		}
+	}
+	t.Fatalf("struct %q not found", name)
+	return StructInfo{}
+}
+
+func findInterfaceInfo(t *testing.T, symbols *PackageSymbols, name string) InterfaceInfo {
+	t.Helper()
+	for _, i := range symbols.Interfaces {
+		if i.Name == name {
+			return i
+		}
+	}
+	t.Fatalf("interface %q not found", name)
+	return InterfaceInfo{}
+}
+
+func TestParsePathRecordsEveryDeclaredFieldName(t *testing.T) {
+	dir := t.TempDir()
+	src := `package models
+
+type Rect struct {
+	Width, Height int ` + "`" + `db:"size"` + "`" + `
+	Label         string
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "rect.go"), []byte(src), 0644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	symbols, err := ParsePath(dir)
+	if err != nil {
+		t.Fatalf("ParsePath failed: %v", err)
+	}
+
+	rect := findStruct(t, symbols, "Rect")
+	if len(rect.Fields) != 3 {
+		t.Fatalf("expected 3 fields, got %d: %+v", len(rect.Fields), rect.Fields)
+	}
+	names := []string{rect.Fields[0].Name, rect.Fields[1].Name, rect.Fields[2].Name}
+	for i, want := range []string{"Width", "Height", "Label"} {
+		if names[i] != want {
+			t.Errorf("field %d = %q, want %q", i, names[i], want)
+		}
+	}
+}
+
+func TestParsePathFindsMethodsDeclaredInOtherFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "model.go"), []byte("package svc\n\ntype Service struct{}\n"), 0644); err != nil {
+		t.Fatalf("failed to write model: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "handlers.go"), []byte("package svc\n\nfunc (s *Service) Run() error { return nil }\nfunc (s *Service) Stop() {}\n"), 0644); err != nil {
+		t.Fatalf("failed to write handlers: %v", err)
+	}
+
+	symbols, err := ParsePath(dir)
+	if err != nil {
+		t.Fatalf("ParsePath failed: %v", err)
+	}
+
+	svc := findStruct(t, symbols, "Service")
+	if len(svc.Methods) != 2 {
+		t.Fatalf("expected 2 methods from another file, got %+v", svc.Methods)
+	}
+}
+
+func TestParsePathRecordsEmbeddedInterfaces(t *testing.T) {
+	dir := t.TempDir()
+	src := `package repo
+
+import "io"
+
+type Base interface {
+	Ping() error
+}
+
+type Store interface {
+	Base
+	io.Closer
+	Get(id string) (string, error)
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "store.go"), []byte(src), 0644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	symbols, err := ParsePath(dir)
+	if err != nil {
+		t.Fatalf("ParsePath failed: %v", err)
+	}
+
+	store := findInterfaceInfo(t, symbols, "Store")
+	if len(store.Embeds) != 2 {
+		t.Fatalf("expected 2 embedded interfaces, got %+v", store.Embeds)
+	}
+	if len(store.Methods) != 1 {
+		t.Errorf("expected 1 directly declared method, got %+v", store.Methods)
+	}
+}
+
+func TestParsePathSynthesisesParameterNames(t *testing.T) {
+	dir := t.TempDir()
+	src := `package repo
+
+import "context"
+
+type Store interface {
+	Get(context.Context, string) (string, error)
+	Tags(names ...string) error
+	Pair() (a, b int)
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "store.go"), []byte(src), 0644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	symbols, err := ParsePath(dir)
+	if err != nil {
+		t.Fatalf("ParsePath failed: %v", err)
+	}
+
+	store := findInterfaceInfo(t, symbols, "Store")
+	byName := map[string]InterfaceMethod{}
+	for _, m := range store.Methods {
+		byName[m.Name] = m
+	}
+
+	get := byName["Get"]
+	if len(get.ParamNames) != 2 || get.ParamNames[0] == "" {
+		t.Errorf("expected synthesised parameter names for Get, got %+v", get.ParamNames)
+	}
+
+	if !byName["Tags"].Variadic {
+		t.Error("expected Tags to be marked variadic")
+	}
+
+	if got := len(byName["Pair"].Returns); got != 2 {
+		t.Errorf("expected 2 return values for Pair, got %d", got)
+	}
+}
+
+func TestParsePathIsDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		src := "package p\n\ntype S" + strings.ToUpper(name) + " struct{ F int }\n"
+		if err := os.WriteFile(filepath.Join(dir, name+".go"), []byte(src), 0644); err != nil {
+			t.Fatalf("failed to write source: %v", err)
+		}
+	}
+
+	first, err := ParsePath(dir)
+	if err != nil {
+		t.Fatalf("ParsePath failed: %v", err)
+	}
+
+	for i := 0; i < 10; i++ {
+		next, err := ParsePath(dir)
+		if err != nil {
+			t.Fatalf("ParsePath failed: %v", err)
+		}
+		for j := range next.Structs {
+			if next.Structs[j].Name != first.Structs[j].Name {
+				t.Fatalf("struct order changed between runs at index %d: %s then %s",
+					j, first.Structs[j].Name, next.Structs[j].Name)
+			}
+		}
 	}
 }

@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/wahyunoerr/go-boost/pkg/astparser"
@@ -70,6 +71,12 @@ func DiffSchemaAndStructs(ctx context.Context, conn *DBConnection, rootDir strin
 func compareTableAndStruct(tbl TableDetail, st astparser.StructInfo) SchemaDiffResult {
 	structFields := make(map[string]bool)
 	for _, f := range st.Fields {
+		if f.Embedded {
+			continue
+		}
+		if isIgnoredColumnTag(f.ParsedTags) {
+			continue
+		}
 		if dbTag, ok := f.ParsedTags["db"]; ok && dbTag != "" {
 			structFields[strings.ToLower(dbTag)] = true
 		} else if gormTag, ok := f.ParsedTags["gorm"]; ok && strings.Contains(gormTag, "column:") {
@@ -107,6 +114,7 @@ func compareTableAndStruct(tbl TableDetail, st astparser.StructInfo) SchemaDiffR
 			missingInDB = append(missingInDB, sf)
 		}
 	}
+	sort.Strings(missingInDB)
 
 	isSync := len(missingInStruct) == 0 && len(missingInDB) == 0
 	summary := "Table and struct schemas are fully synchronized"
@@ -133,4 +141,19 @@ func toSnakeCase(s string) string {
 		res.WriteRune(r)
 	}
 	return strings.ToLower(res.String())
+}
+
+func isIgnoredColumnTag(tags map[string]string) bool {
+	for _, key := range []string{"db", "gorm", "json"} {
+		value, ok := tags[key]
+		if !ok {
+			continue
+		}
+		field, _, _ := strings.Cut(value, ",")
+		field, _, _ = strings.Cut(field, ";")
+		if strings.TrimSpace(field) == "-" {
+			return true
+		}
+	}
+	return false
 }

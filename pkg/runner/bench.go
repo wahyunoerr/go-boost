@@ -33,8 +33,14 @@ func RunBenchmark(ctx context.Context, rootDir string, pkg string, filter string
 	if filter == "" {
 		filter = "."
 	}
+	if err := validateGoTarget(pkg); err != nil {
+		return nil, err
+	}
+	if strings.HasPrefix(filter, "-") {
+		return nil, fmt.Errorf("benchmark filter %q is not allowed: values starting with '-' are interpreted as go tool flags", filter)
+	}
 
-	args := []string{"test", "-bench=" + filter, "-benchmem", "-run=^$", pkg}
+	args := []string{"test", "-bench=" + filter, "-benchmem", "-run=^$", "--", pkg}
 	cmd := exec.CommandContext(ctx, "go", args...)
 	cmd.Dir = rootDir
 
@@ -51,7 +57,7 @@ func RunBenchmark(ctx context.Context, rootDir string, pkg string, filter string
 		Success:   err == nil,
 		Package:   pkg,
 		Items:     make([]BenchmarkItem, 0),
-		RawOutput: raw,
+		RawOutput: truncateTestOutput(raw, nil, nil),
 	}
 
 	lines := strings.Split(raw, "\n")
@@ -65,7 +71,11 @@ func RunBenchmark(ctx context.Context, rootDir string, pkg string, filter string
 		}
 	}
 
-	report.Summary = fmt.Sprintf("Completed %d benchmark(s) in %s", len(report.Items), elapsed)
+	if len(report.Items) == 0 && !report.Success {
+		report.Summary = fmt.Sprintf("No benchmarks ran in %s; the package may have failed to build (see raw_output)", elapsed)
+	} else {
+		report.Summary = fmt.Sprintf("Completed %d benchmark(s) in %s", len(report.Items), elapsed)
+	}
 	return report, nil
 }
 
