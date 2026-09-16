@@ -65,3 +65,27 @@ type Product struct {
 	_ = context.Background()
 	_ = conn
 }
+
+func TestSanitizeMigrationName(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty falls back", "", "sync_schema"},
+		{"plain name", "add_users_table", "add_users_table"},
+		{"spaces become underscores", "add users table", "add_users_table"},
+		{"uppercase is lowered", "AddUsers", "addusers"},
+		{"path separators are stripped", "../../etc/passwd", "etcpasswd"},
+		{"punctuation is stripped", "add-users!@#", "add_users"},
+		{"only punctuation falls back", "!!!", "sync_schema"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeMigrationName(tc.input); got != tc.want {
+				t.Errorf("sanitizeMigrationName(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}

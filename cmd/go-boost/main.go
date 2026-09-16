@@ -460,6 +460,22 @@ func runCheck() int {
 	return findingsExit(len(issues) > 0 || vetFailed)
 }
 
+func resolveScanTarget(cwd string, args []string) (string, int) {
+	if len(args) == 0 {
+		return cwd, exitOK
+	}
+
+	target := args[0]
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(cwd, target)
+	}
+	info, err := os.Stat(target)
+	if err != nil || !info.IsDir() {
+		return "", fail("path %q is not a directory in this project", args[0])
+	}
+	return target, exitOK
+}
+
 func findingsExit(hasFindings bool) int {
 	if hasFindings {
 		return exitFindings
@@ -511,7 +527,12 @@ func runSecurity() int {
 	formatFlag := fs.String("format", "text", "Output format: text, json, sarif")
 	_ = fs.Parse(os.Args[2:])
 
-	vulns, err := security.ScanCodebase(cwd)
+	target, code := resolveScanTarget(cwd, fs.Args())
+	if code != exitOK {
+		return code
+	}
+
+	vulns, err := security.ScanCodebase(target)
 	if err != nil {
 		return fail("Security scan error: %v", err)
 	}
@@ -568,14 +589,22 @@ func runOpenAPI() int {
 		return code
 	}
 
-	d := detector.NewDetector(cwd)
-	stack, _ := d.Detect()
-	title := "API Specification"
-	if stack != nil && stack.ModuleName != "" {
-		title = stack.ModuleName + " API"
+	fs := flag.NewFlagSet("openapi", flag.ExitOnError)
+	titleFlag := fs.String("title", "", "API document title")
+	versionFlag := fs.String("version", "1.0.0", "API document version")
+	_ = fs.Parse(os.Args[2:])
+
+	title := *titleFlag
+	if title == "" {
+		d := detector.NewDetector(cwd)
+		stack, _ := d.Detect()
+		title = "API Specification"
+		if stack != nil && stack.ModuleName != "" {
+			title = stack.ModuleName + " API"
+		}
 	}
 
-	spec, err := generator.GenerateOpenAPISpec(cwd, title)
+	spec, err := generator.GenerateOpenAPISpec(cwd, title, *versionFlag)
 	if err != nil {
 		return fail("Error generating OpenAPI spec: %v", err)
 	}
@@ -596,8 +625,13 @@ func runMigrate() int {
 		return exitOK
 	}
 
+	name := ""
+	if len(os.Args) >= 3 && !strings.HasPrefix(os.Args[2], "-") {
+		name = os.Args[2]
+	}
+
 	fmt.Println("🔄 Comparing database schema with Go struct models...")
-	files, err := database.GenerateMigrationScaffold(context.Background(), &conns.Connections[0], cwd)
+	files, err := database.GenerateMigrationScaffold(context.Background(), &conns.Connections[0], cwd, name)
 	if err != nil {
 		return fail("Migration generation: %v", err)
 	}
@@ -618,7 +652,12 @@ func runDeadCode() int {
 	formatFlag := fs.String("format", "text", "Output format: text, json")
 	_ = fs.Parse(os.Args[2:])
 
-	unused, err := astparser.DetectDeadCode(cwd)
+	target, code := resolveScanTarget(cwd, fs.Args())
+	if code != exitOK {
+		return code
+	}
+
+	unused, err := astparser.DetectDeadCode(target)
 	if err != nil {
 		return fail("Dead code check error: %v", err)
 	}

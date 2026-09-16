@@ -121,6 +121,23 @@ func DetectMainEntry(rootDir string) string {
 	return "."
 }
 
+func resolveSubdirectory(rootDir string, args map[string]any) (string, error) {
+	raw, ok := args["path"].(string)
+	if !ok || raw == "" {
+		return rootDir, nil
+	}
+
+	target := raw
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(rootDir, target)
+	}
+	info, err := os.Stat(target)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("path %q is not a directory in this project", raw)
+	}
+	return target, nil
+}
+
 func tailOutput(out string) string {
 	out = strings.TrimSpace(out)
 	if len(out) <= maxToolOutputBytes {
@@ -604,13 +621,23 @@ func RegisterAllTools(s *Server, rootDir string) {
 
 	s.RegisterTool(Tool{
 		Name:        "security_scan",
-		Description: "Perform static AST security analysis to detect SQL injection vulnerabilities, hardcoded secrets/tokens, and insecure TLS configurations.",
+		Description: "Perform static AST security analysis to detect SQL injection, hardcoded secrets, command injection, path traversal, and insecure TLS configurations.",
 		InputSchema: ToolSchema{
-			Type:       "object",
-			Properties: map[string]PropertyDef{},
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"path": {
+					Type:        "string",
+					Description: "Directory to scan, relative to the project root. Defaults to the whole project.",
+				},
+			},
 		},
 	}, func(ctx context.Context, args map[string]any) (*CallToolResult, error) {
-		vulns, err := security.ScanCodebase(rootDir)
+		target, err := resolveSubdirectory(rootDir, args)
+		if err != nil {
+			return nil, err
+		}
+
+		vulns, err := security.ScanCodebase(target)
 		if err != nil {
 			return nil, err
 		}
@@ -657,6 +684,10 @@ func RegisterAllTools(s *Server, rootDir string) {
 					Type:        "string",
 					Description: "API document title (e.g. 'My Service API').",
 				},
+				"version": {
+					Type:        "string",
+					Description: "API document version (defaults to 1.0.0).",
+				},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (*CallToolResult, error) {
@@ -664,7 +695,12 @@ func RegisterAllTools(s *Server, rootDir string) {
 		if t, ok := args["title"].(string); ok && t != "" {
 			title = t
 		}
-		spec, err := generator.GenerateOpenAPISpec(rootDir, title)
+		version := "1.0.0"
+		if v, ok := args["version"].(string); ok && v != "" {
+			version = v
+		}
+
+		spec, err := generator.GenerateOpenAPISpec(rootDir, title, version)
 		if err != nil {
 			return nil, err
 		}
@@ -682,6 +718,10 @@ func RegisterAllTools(s *Server, rootDir string) {
 				"connection": {
 					Type:        "string",
 					Description: "Optional database connection name.",
+				},
+				"name": {
+					Type:        "string",
+					Description: "Migration name used in the generated file names (e.g. 'add_users_table').",
 				},
 			},
 		},
@@ -702,7 +742,9 @@ func RegisterAllTools(s *Server, rootDir string) {
 			}
 		}
 
-		files, err := database.GenerateMigrationScaffold(ctx, targetConn, rootDir)
+		migrationName, _ := args["name"].(string)
+
+		files, err := database.GenerateMigrationScaffold(ctx, targetConn, rootDir, migrationName)
 		if err != nil {
 			return nil, err
 		}
@@ -716,11 +758,21 @@ func RegisterAllTools(s *Server, rootDir string) {
 		Name:        "deadcode_detect",
 		Description: "Statically scan the codebase AST to detect unused structs, functions, or interfaces.",
 		InputSchema: ToolSchema{
-			Type:       "object",
-			Properties: map[string]PropertyDef{},
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"path": {
+					Type:        "string",
+					Description: "Directory to scan, relative to the project root. Defaults to the whole project.",
+				},
+			},
 		},
 	}, func(ctx context.Context, args map[string]any) (*CallToolResult, error) {
-		unused, err := astparser.DetectDeadCode(rootDir)
+		target, err := resolveSubdirectory(rootDir, args)
+		if err != nil {
+			return nil, err
+		}
+
+		unused, err := astparser.DetectDeadCode(target)
 		if err != nil {
 			return nil, err
 		}

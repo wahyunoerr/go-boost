@@ -41,7 +41,7 @@ type Response struct {
 
 var pathParamRegex = regexp.MustCompile(`[:{]([a-zA-Z0-9_]+)}?`)
 
-func GenerateOpenAPISpec(rootDir string, title string) (string, error) {
+func GenerateOpenAPISpec(rootDir string, title string, version string) (string, error) {
 	routes, err := astparser.ScanRoutes(rootDir)
 	if err != nil {
 		return "", err
@@ -50,12 +50,15 @@ func GenerateOpenAPISpec(rootDir string, title string) (string, error) {
 	if title == "" {
 		title = "Go API Specification"
 	}
+	if version == "" {
+		version = "1.0.0"
+	}
 
 	doc := OpenAPIDoc{
 		OpenAPI: "3.0.3",
 		Info: OpenAPIInfo{
 			Title:       title,
-			Version:     "1.0.0",
+			Version:     version,
 			Description: "Statically generated OpenAPI specification by go-boost",
 		},
 		Paths: make(map[string]map[string]Operation),
