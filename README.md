@@ -407,14 +407,18 @@ dev dependency. Everyone who clones the repository gets the same version, and
 nobody has to install anything globally.
 
 ```bash
-go get -tool github.com/wahyunoerr/go-boost/cmd/go-boost@latest
+go get -tool github.com/wahyunoerr/go-boost/v2/cmd/go-boost@latest
 ```
 
 Your `go.mod` gains a `tool` directive:
 
 ```
-tool github.com/wahyunoerr/go-boost/cmd/go-boost
+tool github.com/wahyunoerr/go-boost/v2/cmd/go-boost
 ```
+
+The `/v2` in the path is Go's semantic import versioning: any module at major
+version 2 or above carries its major version in the path. The command you run
+afterwards is still just `go tool go-boost`.
 
 Run it through the Go toolchain:
 
@@ -430,7 +434,7 @@ configuration works on every machine and can be committed.
 ### 2. As a global binary (Go 1.22+)
 
 ```bash
-go install github.com/wahyunoerr/go-boost/cmd/go-boost@latest
+go install github.com/wahyunoerr/go-boost/v2/cmd/go-boost@latest
 ```
 
 Ensure `$GOPATH/bin` is on your `PATH`:
@@ -452,6 +456,12 @@ git clone https://github.com/wahyunoerr/go-boost.git
 cd go-boost
 go build -o bin/go-boost ./cmd/go-boost
 sudo mv bin/go-boost /usr/local/bin/
+```
+
+### Pinning a specific version
+
+```bash
+go get -tool github.com/wahyunoerr/go-boost/v2/cmd/go-boost@v2.0.0
 ```
 
 ### Verification

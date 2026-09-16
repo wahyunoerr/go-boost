@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/wahyunoerr/go-boost/pkg/detector"
+	"github.com/wahyunoerr/go-boost/v2/pkg/detector"
 )
 
-const toolPackagePath = "github.com/wahyunoerr/go-boost/cmd/go-boost"
+const toolPackagePath = "github.com/wahyunoerr/go-boost/v2/cmd/go-boost"
 
 const (
 	guidelineBeginMarker = "<!-- BEGIN go-boost generated guidelines -->"

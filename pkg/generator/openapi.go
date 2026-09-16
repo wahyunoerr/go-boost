@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/wahyunoerr/go-boost/pkg/astparser"
+	"github.com/wahyunoerr/go-boost/v2/pkg/astparser"
 )
 
 type OpenAPIDoc struct {

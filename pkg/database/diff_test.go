@@ -3,7 +3,7 @@ package database
 import (
 	"testing"
 
-	"github.com/wahyunoerr/go-boost/pkg/astparser"
+	"github.com/wahyunoerr/go-boost/v2/pkg/astparser"
 )
 
 func TestCompareTableAndStruct(t *testing.T) {

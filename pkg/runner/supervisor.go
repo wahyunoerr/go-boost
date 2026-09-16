@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wahyunoerr/go-boost/pkg/diagnostics"
+	"github.com/wahyunoerr/go-boost/v2/pkg/diagnostics"
 )
 
 const maxSupervisedLine = 1 << 20

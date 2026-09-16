@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wahyunoerr/go-boost/pkg/astparser"
+	"github.com/wahyunoerr/go-boost/v2/pkg/astparser"
 )
 
 var qualifiedTypeRegex = regexp.MustCompile(`\b([a-zA-Z_][a-zA-Z0-9_]*)\.[A-Z][a-zA-Z0-9_]*`)

@@ -13,13 +13,13 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/wahyunoerr/go-boost/pkg/astparser"
-	"github.com/wahyunoerr/go-boost/pkg/database"
-	"github.com/wahyunoerr/go-boost/pkg/detector"
-	"github.com/wahyunoerr/go-boost/pkg/generator"
-	"github.com/wahyunoerr/go-boost/pkg/mcp"
-	"github.com/wahyunoerr/go-boost/pkg/runner"
-	"github.com/wahyunoerr/go-boost/pkg/security"
+	"github.com/wahyunoerr/go-boost/v2/pkg/astparser"
+	"github.com/wahyunoerr/go-boost/v2/pkg/database"
+	"github.com/wahyunoerr/go-boost/v2/pkg/detector"
+	"github.com/wahyunoerr/go-boost/v2/pkg/generator"
+	"github.com/wahyunoerr/go-boost/v2/pkg/mcp"
+	"github.com/wahyunoerr/go-boost/v2/pkg/runner"
+	"github.com/wahyunoerr/go-boost/v2/pkg/security"
 )
 
 const (

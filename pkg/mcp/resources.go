@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/wahyunoerr/go-boost/pkg/astparser"
-	"github.com/wahyunoerr/go-boost/pkg/database"
-	"github.com/wahyunoerr/go-boost/pkg/detector"
-	"github.com/wahyunoerr/go-boost/pkg/runner"
+	"github.com/wahyunoerr/go-boost/v2/pkg/astparser"
+	"github.com/wahyunoerr/go-boost/v2/pkg/database"
+	"github.com/wahyunoerr/go-boost/v2/pkg/detector"
+	"github.com/wahyunoerr/go-boost/v2/pkg/runner"
 )
 
 func RegisterAllResources(s *Server, rootDir string) {
