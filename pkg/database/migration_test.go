@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wahyunoerr/go-boost/pkg/astparser"
+	"github.com/wahyunoerr/go-boost/v2/pkg/astparser"
 )
 
 func TestMigrationScaffoldGeneration(t *testing.T) {

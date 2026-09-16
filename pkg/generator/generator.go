@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wahyunoerr/go-boost/pkg/detector"
+	"github.com/wahyunoerr/go-boost/v2/pkg/detector"
 )
 
 type InitResult struct {

@@ -241,7 +241,7 @@ func TestInitDoesNotCreateGitignoreWhereNoneExists(t *testing.T) {
 
 func TestMCPConfigIsPortableWhenInstalledAsGoTool(t *testing.T) {
 	dir, res := initProject(t, map[string]string{
-		"go.mod": "module example.com/app\n\ngo 1.24\n\ntool github.com/wahyunoerr/go-boost/cmd/go-boost\n",
+		"go.mod": "module example.com/app\n\ngo 1.24\n\ntool github.com/wahyunoerr/go-boost/v2/cmd/go-boost\n",
 	})
 
 	if !res.PortableConfig {
