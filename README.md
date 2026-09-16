@@ -87,23 +87,23 @@ The `go-boost` MCP server exposes 21 native tools:
 | `app_info` | Metadata | Analyzes go.mod and AST to extract complete stack metadata, frameworks, ORM, database, logger, and architecture. | None |
 | `ast_inspect` | AST & Models | Statically inspects struct declarations, field tags, interfaces, and method receivers without compiling. | `path` (string, optional) |
 | `find_implementations` | AST & Models | Discovers which structs implement a given interface by computing method sets statically. | `interface` (string, required) |
-| `deadcode_detect` | Code Quality | Statically scans for unreferenced functions, structs, and methods across the codebase. | `path` (string, optional) |
+| `deadcode_detect` | Code Quality | Statically scans for unreferenced functions, structs, and interfaces, matched per package. | `path` (string, optional) |
 | `concurrency_check` | Concurrency | Audits AST for concurrency bugs: missing defer cancel, mutex unlock omissions, and goroutine leaks. | None |
 | `route_list` | Routing | Scans registered HTTP endpoints across Gin, Echo, Fiber, Chi, and Go 1.22+ net/http. | None |
 | `db_connections` | Database | Discovers database connection parameters from environment files and local configs. | None |
 | `db_schema` | Database | Inspects database schema in summary mode or detailed filtered table mode. | `summary` (bool), `filter` (string), `connection` (string), `include_views` (bool) |
 | `db_query` | Database | Executes read-only SQL queries (`SELECT`, `WITH`, `SHOW`, `EXPLAIN`). Mutations are rejected by validation and by opening the database read-only. | `query` (string, required), `connection` (string, optional) |
 | `schema_struct_diff` | Database | Compares database table columns against Go struct field tags to pinpoint missing columns and mismatches. | `connection` (string, optional) |
-| `migration_generate` | Scaffolding | Scaffolds timestamped up and down SQL migration files from struct definitions or diffs. | `name` (string, required), `table` (string, optional) |
-| `mock_generate` | Scaffolding | Generates thread-safe mock struct implementations for any Go interface contract. | `interface` (string, required), `package` (string, optional) |
+| `migration_generate` | Scaffolding | Scaffolds timestamped up and down SQL migration files from the difference between the live schema and your struct tags. | `name` (string, optional), `connection` (string, optional) |
+| `mock_generate` | Scaffolding | Generates a compiling, concurrency-safe mock for any Go interface, including embedded interfaces, variadics and generics. | `interface` (string, required) |
 | `read_logs` | Diagnostics | Reads and parses recent log entries (`slog`, `zap`, `zerolog`, text files) with stack traces. | `entries` (int, default 50) |
 | `last_error` | Diagnostics | Locates the most recent backend error, exception, or goroutine panic with file and line details. | None |
 | `test_runner` | Testing | Runs Go unit tests with targeted package paths, `-run` filters, and coverage metrics. | `package` (string), `run` (string), `coverage` (bool) |
 | `bench_runner` | Performance | Runs benchmarks with memory allocation profiling (`-benchmem`) to extract ns/op, B/op, and allocs/op. | `package` (string), `filter` (string) |
 | `code_check` | Quality | Runs compilation checks and `go vet` to verify code correctness before changes are committed. | `package` (string, optional) |
 | `go_doc` | Documentation | Retrieves official symbol or package documentation from Go stdlib or dependencies via `go doc`. | `symbol` (string, required) |
-| `security_scan` | Security | Scans Go source files for static security risks: SQL injection, hardcoded secrets, and insecure TLS. | `path` (string, optional) |
-| `openapi_generate` | Documentation | Generates OpenAPI 3.0 specification from statically scanned route handlers and DTO structs. | `title` (string, optional), `version` (string, optional) |
+| `security_scan` | Security | Scans for SQL injection, hardcoded secrets, command injection, path traversal, and insecure TLS. | `path` (string, optional) |
+| `openapi_generate` | Documentation | Generates an OpenAPI 3.0 document describing the routes discovered in the AST, with their methods and path parameters. | `title` (string, optional), `version` (string, optional) |
 
 ---
 
@@ -301,6 +301,9 @@ Developers can prompt the AI assistant directly to execute specific tools using 
 Developers can also use `go-boost` directly from the terminal without opening an AI chat:
 
 ```bash
+# All examples assume a global install. With a project tool install,
+# prefix each command with "go tool".
+
 # View all HTTP routes parsed statically from AST
 go-boost routes
 
@@ -632,8 +635,25 @@ Add this block to `.zed/settings.json`:
 
 ## CLI Commands Reference
 
+Every example below is written as `go-boost <command>`, which is what you type
+after a global install. If you installed go-boost as a project tool, prefix each
+one with `go tool`:
+
+```bash
+go-boost status           # global install
+go tool go-boost status   # project tool install
+```
+
+Commands that produce a document write it to standard output, so you choose
+where it goes:
+
+```bash
+go tool go-boost openapi > openapi.json
+go tool go-boost mock UserRepository > internal/domain/user_mock.go
+```
+
 ### `go-boost init`
-Scans the project, generates MCP configurations, and writes tailored AI guidelines and skills.
+Scans the project, generates MCP configurations, and writes tailored AI guidelines and skills. Re-running it is safe: your own content is preserved and only the generated block is refreshed.
 
 ### `go-boost run [command...]`
 Supervises application or build execution with zero-latency streaming. Upon crash, compilation error, runtime panic, or port conflict, it immediately halts and displays an instant visual diagnostic box showing the exact file, line number, source code snippet with pointer arrow, root cause analysis, and actionable fix:
@@ -667,11 +687,11 @@ If run without arguments, `go-boost run` automatically detects `Makefile` with a
 ### `go-boost mcp`
 Runs the standard Model Context Protocol server over `stdio` (JSON-RPC 2.0).
 
-### `go-boost status`
-Prints a diagnostic summary including module name, Go version, framework, ORM, logger, architecture, and route counts.
+### `go-boost status [--format=text|json]`
+Prints a diagnostic summary including module name, Go version, framework, ORM, logger, detected architecture, and route counts.
 
-### `go-boost routes`
-Scans the AST and prints all registered HTTP endpoints:
+### `go-boost routes [--format=text|json]`
+Scans the AST and prints all registered HTTP endpoints. Group prefixes are resolved across functions, so routes registered in a helper keep the prefix the caller gave them:
 ```text
 METHOD   PATH                           HANDLER                        LOCATION
 -----------------------------------------------------------------------------------------
@@ -684,15 +704,15 @@ GET      /health                        HandleHealth                   cmd/api/m
 Inspects any Go struct or interface statically:
 ```text
 $ go-boost inspect User
-Struct: User
-Location: internal/domain/user.go:12
-Fields:
-  - ID: uint `json:"id" gorm:"primaryKey"`
-  - Email: string `json:"email" validate:"required,email"`
+📦 Struct: User
+   Location: internal/domain/user.go:12
+   Fields:
+     - ID: uint `json:"id" gorm:"primaryKey"`
+     - Email: string `json:"email" validate:"required,email"`
 ```
 
-### `go-boost check`
-Runs static concurrency hazard audits and `go vet` verification in one command.
+### `go-boost check [--format=text|json]`
+Runs the concurrency audit and `go vet` in one command. The audit reports a mutex held across an early return, a cancel function that is never called, and goroutines started in a loop with nothing waiting on them. Returns exit code `2` when it finds something.
 
 ### `go-boost bench [package]`
 Runs benchmarks with memory allocation profiling (`-benchmem`):
@@ -706,45 +726,62 @@ BenchmarkParseAST-8                 50000        24100.00 ns/op  4096 B/op    18
 ### `go-boost schema [--summary] [--filter=<table_name>]`
 Inspects the database schema directly in your terminal.
 
-### `go-boost security [path]`
-Scans the codebase for static security hazards such as SQL injection vulnerabilities, hardcoded credentials or secrets, and weak TLS configurations:
+### `go-boost security [path] [--format=text|json|sarif]`
+Scans for SQL injection, hardcoded credentials, command injection, path traversal, and weak TLS configuration. An optional directory narrows the scan. Returns exit code `2` when it finds something, so it works as a CI gate:
 ```text
 $ go-boost security
-STATUS: 0 critical vulnerabilities found across 24 files
+🛡️  Running static security and vulnerability audit...
+🚨 Found 1 potential security vulnerability(ies):
+
+   [HIGH] Suspected hardcoded secret or credential in 'apiKey' (File: internal/auth/token.go:3)
+        Remediation: Load secrets from environment variables or a secret manager, and rotate this value if it was ever real.
 ```
 
-### `go-boost mock <interface> [package]`
-Generates a complete, thread-safe Go mock struct implementing an interface contract for unit testing:
-```text
-$ go-boost mock UserRepository ./internal/domain
-Generated mock MockUserRepository in internal/domain/user_repository_mock.go
+Use `--format=sarif` to upload the result to GitHub code scanning. Paths in the SARIF output are repository-relative, so findings map onto the right files.
+
+### `go-boost mock <interface>`
+Generates a compiling, concurrency-safe mock for an interface and prints it to standard output. Embedded interfaces, variadics, unnamed parameters, and generics are all handled, and the output includes a compile-time assertion that the mock satisfies the interface:
+```bash
+$ go-boost mock UserRepository > internal/domain/user_repository_mock.go
 ```
+
+An interface that embeds one from another package cannot be expanded from the AST alone; go-boost reports that instead of emitting a mock that would not compile.
 
 ### `go-boost openapi [--title=...] [--version=...]`
-Scans AST route definitions and DTO structs to generate OpenAPI 3.0 specification in JSON format:
-```text
-$ go-boost openapi --title="Store API" --version="1.0.0"
-OpenAPI 3.0 specification written to openapi.json
+Scans the routes discovered in the AST and prints an OpenAPI 3.0 document to standard output. The title defaults to your module name and the version to `1.0.0`:
+```bash
+$ go-boost openapi --title="Store API" --version="2.1.0" > openapi.json
 ```
 
-### `go-boost migrate <name> [--table=...]`
-Generates timestamped up and down SQL migration scripts from struct field tags or schema differences:
+The generated document describes paths, methods, and path parameters. Request and response schemas are not inferred from handler bodies.
+
+### `go-boost migrate [name]`
+Compares the live database schema against your Go struct tags and writes timestamped up and down migrations for the columns that are missing. The name is optional and is used in the file names:
 ```text
-$ go-boost migrate create_users_table --table=users
-Created migrations/20260913_create_users_table.up.sql
-Created migrations/20260913_create_users_table.down.sql
+$ go-boost migrate add_users_table
+🔄 Comparing database schema with Go struct models...
+✨ Successfully generated migration files:
+   Up  : migrations/20260916103000_add_users_table.up.sql
+   Down: migrations/20260916103000_add_users_table.down.sql
 ```
 
-### `go-boost deadcode [path]`
-Scans the AST to identify unused functions, methods, and structs:
+This requires a reachable database. It reports that the schema is already in sync when there is nothing to generate.
+
+### `go-boost deadcode [path] [--format=text|json]`
+Scans the AST for unreferenced functions, structs, and interfaces, matching symbols per package so that same-named types in different packages are not confused. Returns exit code `2` when it finds something:
 ```text
 $ go-boost deadcode
-Scanning codebase for unreferenced symbols...
-No dead code detected.
+🔍 Scanning AST for unreferenced/dead declarations...
+⚠️ Found 2 unreferenced declaration(s):
+
+KIND         NAME                           LOCATION
+--------------------------------------------------------------------------------
+func         legacyHelper                   internal/util/old.go:14
+struct       UnusedConfig                   internal/config/draft.go:7
 ```
 
 ### `go-boost update`
-Re-scans dependencies and synchronizes guideline documents and skill files.
+An alias for `init`. Re-scans dependencies and layout, then refreshes the generated guideline block and installed skills.
 
 ---
 

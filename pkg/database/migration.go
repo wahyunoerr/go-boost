@@ -18,7 +18,7 @@ type MigrationFiles struct {
 	DownSQL  string `json:"down_sql"`
 }
 
-func GenerateMigrationScaffold(ctx context.Context, conn *DBConnection, rootDir string) (*MigrationFiles, error) {
+func GenerateMigrationScaffold(ctx context.Context, conn *DBConnection, rootDir string, name string) (*MigrationFiles, error) {
 	diffs, err := DiffSchemaAndStructs(ctx, conn, rootDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate schema diff: %w", err)
@@ -65,6 +65,7 @@ func GenerateMigrationScaffold(ctx context.Context, conn *DBConnection, rootDir 
 		return nil, fmt.Errorf("no schema discrepancies found; database and Go structs are already in sync")
 	}
 
+	name = sanitizeMigrationName(name)
 	timestamp := time.Now().Format("20060102150405")
 	migrationsDir := filepath.Join(rootDir, "migrations")
 	if err := os.MkdirAll(migrationsDir, 0755); err != nil {
@@ -74,8 +75,8 @@ func GenerateMigrationScaffold(ctx context.Context, conn *DBConnection, rootDir 
 	upSQL := "-- Migration Up\n" + strings.Join(upStmts, "\n") + "\n"
 	downSQL := "-- Migration Down\n" + strings.Join(downStmts, "\n") + "\n"
 
-	upPath := filepath.Join(migrationsDir, fmt.Sprintf("%s_sync_schema.up.sql", timestamp))
-	downPath := filepath.Join(migrationsDir, fmt.Sprintf("%s_sync_schema.down.sql", timestamp))
+	upPath := filepath.Join(migrationsDir, fmt.Sprintf("%s_%s.up.sql", timestamp, name))
+	downPath := filepath.Join(migrationsDir, fmt.Sprintf("%s_%s.down.sql", timestamp, name))
 
 	if err := os.WriteFile(upPath, []byte(upSQL), 0644); err != nil {
 		return nil, err
@@ -121,4 +122,27 @@ func mapGoTypeToSQL(goType, colName string) string {
 		}
 		return "VARCHAR(255)"
 	}
+}
+
+func sanitizeMigrationName(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if name == "" {
+		return "sync_schema"
+	}
+
+	var sb strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			sb.WriteRune(r)
+		case r == '_' || r == '-' || r == ' ':
+			sb.WriteRune('_')
+		}
+	}
+
+	cleaned := strings.Trim(sb.String(), "_")
+	if cleaned == "" {
+		return "sync_schema"
+	}
+	return cleaned
 }
