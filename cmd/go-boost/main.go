@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	Version = "2.0.0"
+	Version = "2.1.0"
 	Banner  = `
    ____ _       ____                  _   
   / ___/___    | __ )  ___   ___  ___| |_ 
