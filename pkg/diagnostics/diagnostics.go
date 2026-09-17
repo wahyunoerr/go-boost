@@ -13,9 +13,9 @@ import (
 )
 
 var (
-	compileErrRegex  = regexp.MustCompile(`(?m)^([a-zA-Z]:)?([a-zA-Z0-9_\-\./\\ ]+\.go):([0-9]+)(?::([0-9]+))?:\s*(.+)$`)
+	compileErrRegex  = regexp.MustCompile(`(?m)^((?:[a-zA-Z]:)?[^:*?"<>|\r\n]*?\.go):([0-9]+)(?::([0-9]+))?:\s*(.+)$`)
 	panicHeaderRegex = regexp.MustCompile(`(?m)^panic:\s*(.+)$`)
-	goFileLocRegex   = regexp.MustCompile(`((?:[a-zA-Z]:)?[a-zA-Z0-9_\-\./\\]+\.go):([0-9]+)`)
+	goFileLocRegex   = regexp.MustCompile(`((?:[a-zA-Z]:)?[^\s:*?"<>|]*?\.go):([0-9]+)`)
 	portPatternRegex = regexp.MustCompile(`(?i)(?:listen\s+tcp\s+[^:]*:|:)([0-9]{2,5})(?::\s*bind|\s*bind)`)
 )
 
@@ -71,13 +71,13 @@ func AnalyzeErrorOutput(rawOutput string, projectRoot string) *DiagnosticReport 
 	}
 
 	if compileMatches := compileErrRegex.FindStringSubmatch(rawOutput); len(compileMatches) > 1 {
-		filePath := compileMatches[1] + compileMatches[2]
-		lineNum, _ := strconv.Atoi(compileMatches[3])
+		filePath := compileMatches[1]
+		lineNum, _ := strconv.Atoi(compileMatches[2])
 		colNum := 0
-		if len(compileMatches) > 4 && compileMatches[4] != "" {
-			colNum, _ = strconv.Atoi(compileMatches[4])
+		if len(compileMatches) > 3 && compileMatches[3] != "" {
+			colNum, _ = strconv.Atoi(compileMatches[3])
 		}
-		errMsg := compileMatches[5]
+		errMsg := compileMatches[4]
 
 		report := &DiagnosticReport{
 			Category:  "Compilation Error",
