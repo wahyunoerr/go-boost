@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/wahyunoerr/go-boost/v2/pkg/detector"
 )
 
 const (
@@ -273,8 +275,8 @@ func runSQLite(ctx context.Context, conn *DBConnection, query string) (string, e
 	if conn.Database == "" {
 		return "", fmt.Errorf("sqlite connection has no database file")
 	}
-	if _, err := exec.LookPath("sqlite3"); err != nil {
-		return "", fmt.Errorf("sqlite3 CLI is not installed in $PATH")
+	if err := requireClient("sqlite"); err != nil {
+		return "", err
 	}
 
 	cmd := exec.CommandContext(ctx, "sqlite3", "-readonly", "-header", "-table", safeArgValue(conn.Database), query)
@@ -282,8 +284,8 @@ func runSQLite(ctx context.Context, conn *DBConnection, query string) (string, e
 }
 
 func runPostgres(ctx context.Context, conn *DBConnection, query string) (string, error) {
-	if _, err := exec.LookPath("psql"); err != nil {
-		return "", fmt.Errorf("psql CLI client is not installed in $PATH to execute PostgreSQL queries directly")
+	if err := requireClient("postgres"); err != nil {
+		return "", err
 	}
 
 	args := []string{"-v", "ON_ERROR_STOP=1", "-d", safeArgValue(conn.Database), "-c", query}
@@ -295,8 +297,8 @@ func runPostgres(ctx context.Context, conn *DBConnection, query string) (string,
 }
 
 func runMySQL(ctx context.Context, conn *DBConnection, query string) (string, error) {
-	if _, err := exec.LookPath("mysql"); err != nil {
-		return "", fmt.Errorf("mysql CLI client is not installed in $PATH to execute MySQL queries directly")
+	if err := requireClient("mysql"); err != nil {
+		return "", err
 	}
 
 	args := []string{
@@ -376,4 +378,15 @@ func truncateOutput(out string) string {
 		return out
 	}
 	return out[:maxQueryOutput] + fmt.Sprintf("\n... [truncated %d bytes; add a LIMIT or WHERE clause to narrow the result]", len(out)-maxQueryOutput)
+}
+
+func requireClient(driver string) error {
+	name, install, ok := detector.DatabaseClientFor(driver)
+	if ok {
+		return nil
+	}
+	if install == "" {
+		return fmt.Errorf("no client is known for driver %q", driver)
+	}
+	return fmt.Errorf("go-boost reads %s through the %s command line client, which was not found in $PATH.\nInstall it with one of:\n  %s\nRun app_info to see which database clients are available on this machine", driver, name, install)
 }

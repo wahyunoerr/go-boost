@@ -30,6 +30,7 @@
   - [2. Three Ways Tools Are Executed](#2-three-ways-tools-are-executed)
   - [3. End-to-End Real-World Scenario](#3-end-to-end-real-world-scenario)
   - [4. How to Verify Tool Activation](#4-how-to-verify-tool-activation)
+- [Requirements](#requirements)
 - [Installation Guide](#installation-guide)
 - [Quick Start](#quick-start)
 - [Exit Codes](#exit-codes)
@@ -48,9 +49,9 @@
 
 ## Architecture and Advantages
 
-`go-boost` is built directly on the Go standard library (`go/parser`, `go/ast`, `go/types`, `net/http`) with zero external runtime dependencies:
+`go-boost` is built directly on the Go standard library (`go/parser`, `go/ast`, `go/token`) and has **zero Go module dependencies**. The database tools are the one exception to being self-contained: they drive the official `sqlite3`, `psql`, and `mysql` command line clients, which must be installed separately. See [Requirements](#requirements).
 
-1. **Sub-millisecond Native Speed**: Runs as a standalone compiled binary with an initialization time under 3 milliseconds and approximately 8 MB memory footprint.
+1. **Native Speed**: Runs as a standalone compiled binary. Measured on an Apple Silicon Mac: a median 3.9 ms to start and print its version, 30 ms to complete an MCP handshake plus a full project scan, and a 6 MB peak resident set.
 2. **Static AST Analysis**: Reads structs, interfaces, methods, comments, and field tags statically without executing or compiling the application code.
 3. **Implicit Interface Matcher**: Computes method sets across the codebase to identify which concrete structs satisfy any given interface contract.
 4. **Static Concurrency Hazard Detection**: Audits AST patterns for goroutine leaks, context timer leaks (missing defer cancel), and mutex lock hygiene.
@@ -401,6 +402,35 @@ To verify that the `go-boost` MCP server is running properly in your editor:
 
 ---
 
+## Requirements
+
+**Go 1.22 or newer** is the only requirement for the analysis, generation, and diagnostic tools. They read your source with the standard library and need nothing else installed.
+
+**The five database tools need a command line client** for whichever engine you use. go-boost drives the official client rather than bundling a driver, which is what keeps it at zero Go module dependencies:
+
+| Engine | Client required | Install |
+| :--- | :--- | :--- |
+| SQLite | `sqlite3` | Preinstalled on macOS. `apt install sqlite3`. [Windows builds](https://sqlite.org/download.html) |
+| PostgreSQL | `psql` | `brew install libpq` or `apt install postgresql-client` |
+| MySQL / MariaDB | `mysql` | `brew install mysql-client` or `apt install mysql-client` |
+
+The tools affected are `db_query`, `db_schema`, `db_connections`, `schema_struct_diff`, and `migration_generate`. Every other tool works without them.
+
+You do not have to guess what is available. `app_info` reports which clients it found on the machine, so an agent knows up front which tools it can use:
+
+```json
+"capabilities": {
+  "external_tools": [
+    { "name": "sqlite3", "available": true,  "path": "/usr/bin/sqlite3" },
+    { "name": "psql",    "available": false, "install": "brew install libpq ..." }
+  ]
+}
+```
+
+When a client is missing, the error says exactly how to install it rather than only reporting the absence.
+
+---
+
 ## Installation Guide
 
 ### 1. As a project tool (recommended, Go 1.24+)
@@ -737,7 +767,17 @@ $ go-boost security
         Remediation: Load secrets from environment variables or a secret manager, and rotate this value if it was ever real.
 ```
 
-Use `--format=sarif` to upload the result to GitHub code scanning. Paths in the SARIF output are repository-relative, so findings map onto the right files.
+Use `--format=sarif` to upload the result to GitHub code scanning. Paths in the SARIF output are repository-relative, so findings map onto the right files. Code scanning is free for public repositories; for a private repository it needs GitHub Advanced Security, which is only available on a Team or Enterprise plan. The exit code works everywhere, so a private repository can gate on `go-boost security` alone without any of that.
+
+**Adopting the scanner on an existing codebase.** A project that already has findings does not have to fix them all before the gate is useful. Record them once and the scanner will only report what is new:
+
+```bash
+go-boost security --write-baseline   # writes .go-boost-security.baseline.json
+go-boost security                    # reports only findings absent from the baseline
+go-boost security --no-baseline      # reports everything again
+```
+
+A finding is matched by its type, file, and message, so it survives the line moving. A finding that is not in the baseline still fails the build. Commit the baseline file and shrink it over time.
 
 ### `go-boost mock <interface>`
 Generates a compiling, concurrency-safe mock for an interface and prints it to standard output. Embedded interfaces, variadics, unnamed parameters, and generics are all handled, and the output includes a compile-time assertion that the mock satisfies the interface:

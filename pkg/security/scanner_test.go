@@ -192,3 +192,166 @@ func main() {}
 		}
 	}
 }
+
+func TestScanCodebaseDistinguishesBaseDirectoryFromUntrustedSegment(t *testing.T) {
+	vulns := scanSource(t, `package main
+
+import (
+	"os"
+	"path/filepath"
+)
+
+func safe(rootDir string) {
+	_, _ = os.ReadFile(filepath.Join(rootDir, "go.mod"))
+	_, _ = os.ReadFile(filepath.Join(rootDir, "config", "app.yaml"))
+}
+
+func main() {}
+`)
+
+	if hasType(vulns, "path_traversal") {
+		t.Errorf("joining a base directory with constant segments cannot traverse, got:\n%s", describe(vulns))
+	}
+}
+
+func TestScanCodebaseStillFlagsUntrustedPathSegment(t *testing.T) {
+	vulns := scanSource(t, `package main
+
+import (
+	"os"
+	"path/filepath"
+)
+
+func unsafe(rootDir, userInput string) {
+	_, _ = os.ReadFile(filepath.Join(rootDir, userInput))
+}
+
+func main() {}
+`)
+
+	if !hasType(vulns, "path_traversal") {
+		t.Errorf("an untrusted trailing segment must still be reported, got:\n%s", describe(vulns))
+	}
+}
+
+func TestSecretValueRegexCoversModernTokenFormats(t *testing.T) {
+	alnum := func(n int) string { return strings.Repeat("a1B2c3D4e5", 8)[:n] }
+
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{"openai project key", "sk" + "-proj-" + alnum(24) + "_XY", true},
+		{"openai legacy key", "sk" + "-" + alnum(26), true},
+		{"aws access key", "AKIA" + strings.ToUpper(alnum(16)), true},
+		{"github personal token", "ghp" + "_" + alnum(36), true},
+		{"github server token", "ghs" + "_" + alnum(36), true},
+		{"gitlab token", "glpat" + "-" + alnum(20), true},
+		{"google api key", "AIza" + alnum(35), true},
+		{"stripe live key", "sk" + "_live_" + alnum(24), true},
+		{"npm token", "npm" + "_" + alnum(36), true},
+		{"slack token", "xoxb" + "-" + alnum(12), true},
+		{"jwt", "eyJ" + alnum(10) + "." + alnum(10) + "." + alnum(6), true},
+		{"private key header", "-----BEGIN RSA PRIVATE" + " KEY-----", true},
+		{"ordinary sentence", "this is just a normal string value", false},
+		{"short prefix only", "sk" + "-short", false},
+		{"module path", "github.com/wahyunoerr/go-boost/v2/pkg/security", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := secretValueRegex.MatchString(tc.value); got != tc.want {
+				t.Errorf("match(%q) = %v, want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestScanCodebaseDetectsCredentialSplitAcrossLiterals(t *testing.T) {
+	vulns := scanSource(t, `package main
+
+const token = "sk`+`_live_" + "a1B2c3D4e5a1B2c3D4e5a1B2"
+
+func main() { _ = token }
+`)
+
+	if !hasType(vulns, "hardcoded_secret") {
+		t.Errorf("a key split across concatenated literals must still be detected, got:\n%s", describe(vulns))
+	}
+}
+
+func TestScanCodebaseDetectsOpenAIProjectKey(t *testing.T) {
+	vulns := scanSource(t, `package main
+
+const token = "sk" + "-proj-" + "a1B2c3D4e5a1B2c3D4e5a1B2" + "_XY"
+
+func main() { _ = token }
+`)
+
+	if !hasType(vulns, "hardcoded_secret") {
+		t.Errorf("a modern OpenAI project key must be detected, got:\n%s", describe(vulns))
+	}
+}
+
+func TestBaselineAcceptsKnownFindingsButNotNewOnes(t *testing.T) {
+	dir := t.TempDir()
+	source := `package main
+
+const apiKey = "abcdefghijklmnopqrstuvwxyz123456"
+
+func main() { _ = apiKey }
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(source), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	first, err := ScanCodebase(dir)
+	if err != nil {
+		t.Fatalf("ScanCodebase failed: %v", err)
+	}
+	if len(first) == 0 {
+		t.Fatal("expected a finding to record")
+	}
+	if _, err := WriteBaseline(dir, first); err != nil {
+		t.Fatalf("WriteBaseline failed: %v", err)
+	}
+
+	baseline, err := LoadBaseline(dir)
+	if err != nil {
+		t.Fatalf("LoadBaseline failed: %v", err)
+	}
+	remaining, accepted := ApplyBaseline(first, baseline)
+	if len(remaining) != 0 {
+		t.Errorf("recorded findings should be accepted, got %d remaining", len(remaining))
+	}
+	if accepted != len(first) {
+		t.Errorf("accepted = %d, want %d", accepted, len(first))
+	}
+
+	newSource := source + `
+const jwtSecret = "another-long-production-secret"
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(newSource), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	second, err := ScanCodebase(dir)
+	if err != nil {
+		t.Fatalf("ScanCodebase failed: %v", err)
+	}
+	remaining, _ = ApplyBaseline(second, baseline)
+	if len(remaining) == 0 {
+		t.Fatal("a baseline must never hide a finding that was not recorded in it")
+	}
+}
+
+func TestLoadBaselineWithoutFileIsNotAnError(t *testing.T) {
+	b, err := LoadBaseline(t.TempDir())
+	if err != nil {
+		t.Fatalf("expected a missing baseline to be fine, got: %v", err)
+	}
+	if len(b.Accepted) != 0 {
+		t.Errorf("expected an empty baseline, got %d entries", len(b.Accepted))
+	}
+}
