@@ -20,6 +20,7 @@ type ProjectStack struct {
 	Packages         []PackageInfo   `json:"packages"`
 	DetectedDirs     map[string]bool `json:"detected_dirs"`
 	Layout           *ProjectLayout  `json:"layout,omitempty"`
+	Capabilities     *Capabilities   `json:"capabilities,omitempty"`
 }
 
 type PackageInfo struct {

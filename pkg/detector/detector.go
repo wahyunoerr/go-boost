@@ -51,6 +51,7 @@ func (d *Detector) Detect() (*ProjectStack, error) {
 	d.scanDirectoryStructure(stack)
 
 	stack.Layout = DetectLayout(d.rootDir)
+	stack.Capabilities = DetectCapabilities()
 
 	d.inferArchitecture(stack)
 

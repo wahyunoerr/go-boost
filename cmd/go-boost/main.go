@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	Version = "2.1.0"
+	Version = "2.2.0"
 	Banner  = `
    ____ _       ____                  _   
   / ___/___    | __ )  ___   ___  ___| |_ 
@@ -460,6 +460,13 @@ func runCheck() int {
 	return findingsExit(len(issues) > 0 || vetFailed)
 }
 
+func relativeToRoot(root, path string) string {
+	if rel, err := filepath.Rel(root, path); err == nil {
+		return rel
+	}
+	return path
+}
+
 func resolveScanTarget(cwd string, args []string) (string, int) {
 	if len(args) == 0 {
 		return cwd, exitOK
@@ -525,6 +532,8 @@ func runSecurity() int {
 
 	fs := flag.NewFlagSet("security", flag.ExitOnError)
 	formatFlag := fs.String("format", "text", "Output format: text, json, sarif")
+	writeBaseline := fs.Bool("write-baseline", false, "Record the current findings as accepted and exit")
+	noBaseline := fs.Bool("no-baseline", false, "Report every finding, ignoring the baseline file")
 	_ = fs.Parse(os.Args[2:])
 
 	target, code := resolveScanTarget(cwd, fs.Args())
@@ -535,6 +544,25 @@ func runSecurity() int {
 	vulns, err := security.ScanCodebase(target)
 	if err != nil {
 		return fail("Security scan error: %v", err)
+	}
+
+	if *writeBaseline {
+		path, err := security.WriteBaseline(target, vulns)
+		if err != nil {
+			return fail("Failed to write baseline: %v", err)
+		}
+		fmt.Printf("Recorded %d finding(s) as accepted in %s\n", len(vulns), relativeToRoot(target, path))
+		fmt.Println("Future runs report only findings that are not in this file.")
+		return exitOK
+	}
+
+	accepted := 0
+	if !*noBaseline {
+		baseline, err := security.LoadBaseline(target)
+		if err != nil {
+			return fail("Security scan error: %v", err)
+		}
+		vulns, accepted = security.ApplyBaseline(vulns, baseline)
 	}
 
 	if *formatFlag == "json" {
@@ -549,8 +577,11 @@ func runSecurity() int {
 	}
 
 	fmt.Println("🛡️  Running static security and vulnerability audit...")
+	if accepted > 0 {
+		fmt.Printf("ℹ️  %d finding(s) accepted by %s\n", accepted, security.BaselineFile)
+	}
 	if len(vulns) == 0 {
-		fmt.Println("✅ Security audit passed: No SQL injection, hardcoded secrets, or insecure TLS detected.")
+		fmt.Println("✅ Security audit passed: No new findings.")
 		return exitOK
 	}
 
@@ -744,7 +775,7 @@ func formatSARIF(vulns []security.SecurityVulnerability) string {
 
 	var report SarifReport
 	report.Schema = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
-	report.Version = "2.1.0"
+	report.Version = "2.2.0"
 	report.Runs = []struct {
 		Tool struct {
 			Driver struct {

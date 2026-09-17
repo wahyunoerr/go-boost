@@ -100,8 +100,8 @@ func sqliteCmd(ctx context.Context, conn *DBConnection, query string) *exec.Cmd 
 }
 
 func introspectSQLite(ctx context.Context, conn *DBConnection, opts SchemaOptions, result *SchemaResult) (*SchemaResult, error) {
-	if _, err := exec.LookPath("sqlite3"); err != nil {
-		return result, fmt.Errorf("sqlite3 CLI is not installed in $PATH")
+	if err := requireClient("sqlite"); err != nil {
+		return result, err
 	}
 
 	query := "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%';"
@@ -209,8 +209,8 @@ func runPsqlQuery(ctx context.Context, conn *DBConnection, query string) ([]stri
 }
 
 func introspectPostgres(ctx context.Context, conn *DBConnection, opts SchemaOptions, result *SchemaResult) (*SchemaResult, error) {
-	if _, err := exec.LookPath("psql"); err != nil {
-		return result, fmt.Errorf("psql CLI client is not installed in $PATH")
+	if err := requireClient("postgres"); err != nil {
+		return result, err
 	}
 
 	tableTypes := "'BASE TABLE'"
@@ -356,8 +356,8 @@ func runMySQLQuery(ctx context.Context, conn *DBConnection, query string) ([]str
 }
 
 func introspectMySQL(ctx context.Context, conn *DBConnection, opts SchemaOptions, result *SchemaResult) (*SchemaResult, error) {
-	if _, err := exec.LookPath("mysql"); err != nil {
-		return result, fmt.Errorf("mysql CLI client is not installed in $PATH")
+	if err := requireClient("mysql"); err != nil {
+		return result, err
 	}
 	if conn.Database == "" {
 		return result, fmt.Errorf("mysql connection has no database name")

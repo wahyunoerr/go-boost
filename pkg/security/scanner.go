@@ -1,12 +1,15 @@
 package security
 
 import (
+	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -24,7 +27,7 @@ type SecurityVulnerability struct {
 var (
 	secretNameRegex = regexp.MustCompile(`(?i)(api[_-]?key|apikey|secret|passwd|password|jwt[_-]?secret|auth[_-]?token|access[_-]?token|refresh[_-]?token|client[_-]?secret|db[_-]?pass|private[_-]?key|credential)`)
 
-	secretValueRegex = regexp.MustCompile(`(AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{22,}|gho_[a-zA-Z0-9]{36}|sk_live_[0-9a-zA-Z]{24}|sk-[a-zA-Z0-9]{20,}|xox[baprs]-[0-9a-zA-Z-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]+\.[A-Za-z0-9_.+/=-]*)`)
+	secretValueRegex = regexp.MustCompile(`(AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|ghu_[a-zA-Z0-9]{36}|ghs_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{22,}|glpat-[0-9A-Za-z_-]{20,}|sk_live_[0-9a-zA-Z]{24}|pk_live_[0-9a-zA-Z]{24}|rk_live_[0-9a-zA-Z]{24}|sk-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|npm_[A-Za-z0-9]{36}|xox[baprs]-[0-9a-zA-Z-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]+\.[A-Za-z0-9_.+/=-]*)`)
 
 	sqlKeywordRegex = regexp.MustCompile(`(?i)\b(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|WHERE|FROM|JOIN|ORDER\s+BY|VALUES)\b`)
 
@@ -130,6 +133,8 @@ func inspectFileSecurity(file *ast.File, fset *token.FileSet, filePath string) [
 			return false
 		case *ast.KeyValueExpr:
 			s.checkKeyValue(node)
+		case *ast.BinaryExpr:
+			s.checkConcatenatedLiteral(node)
 		case *ast.BasicLit:
 			s.checkLiteralValue(node)
 		}
@@ -168,6 +173,8 @@ func (s *fileScanner) scanFunctionBody(body *ast.BlockStmt) {
 			s.checkAssignment(node)
 		case *ast.ValueSpec:
 			s.checkValueSpecNames(node)
+		case *ast.BinaryExpr:
+			s.checkConcatenatedLiteral(node)
 		case *ast.BasicLit:
 			s.checkLiteralValue(node)
 		}
@@ -374,19 +381,11 @@ func (s *fileScanner) checkFileAccess(node *ast.CallExpr, callName, lowerCall st
 	case *ast.BinaryExpr:
 		dynamic = true
 	case *ast.CallExpr:
-		name := exprToString(a.Fun)
-		dynamic = name == "fmt.Sprintf" || name == "fmt.Sprint" || name == "filepath.Join" || name == "path.Join"
-		if dynamic {
-			allConst := true
-			for _, joinArg := range a.Args {
-				if !isConstantExpr(joinArg) {
-					allConst = false
-					break
-				}
-			}
-			if allConst {
-				dynamic = false
-			}
+		switch exprToString(a.Fun) {
+		case "fmt.Sprintf", "fmt.Sprint":
+			dynamic = true
+		case "filepath.Join", "path.Join":
+			dynamic = hasDynamicTrailingSegment(a.Args)
 		}
 	}
 
@@ -400,6 +399,18 @@ func (s *fileScanner) checkFileAccess(node *ast.CallExpr, callName, lowerCall st
 		Message:     "File path is built from a dynamic value in " + callName + "; a caller-controlled value could escape the intended directory",
 		Remediation: "Confine the access to a base directory with os.Root (Go 1.24+), or reject the input unless filepath.IsLocal reports true. filepath.Clean alone does not prevent traversal.",
 	})
+}
+
+func hasDynamicTrailingSegment(args []ast.Expr) bool {
+	for i, arg := range args {
+		if i == 0 {
+			continue
+		}
+		if !isConstantExpr(arg) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *fileScanner) checkKeyValue(node *ast.KeyValueExpr) {
@@ -483,6 +494,26 @@ func (s *fileScanner) checkSecretPair(pos token.Pos, name string, value ast.Expr
 		Severity:    "HIGH",
 		Message:     "Suspected hardcoded secret or credential in '" + name + "'",
 		Remediation: "Load secrets from environment variables or a secret manager, and rotate this value if it was ever real.",
+	})
+}
+
+func (s *fileScanner) checkConcatenatedLiteral(node *ast.BinaryExpr) {
+	if node.Op != token.ADD {
+		return
+	}
+	value, hasDynamic := flattenConcat(node)
+	if hasDynamic || value == "" {
+		return
+	}
+	if !secretValueRegex.MatchString(value) {
+		return
+	}
+
+	s.add(node.Pos(), SecurityVulnerability{
+		Type:        "hardcoded_secret",
+		Severity:    "CRITICAL",
+		Message:     "Found a hardcoded credential assembled from concatenated string literals",
+		Remediation: "Remove the credential from source control and rotate the exposed key immediately. Splitting a key across concatenated literals hides it from most scanners but not from anyone reading the code.",
 	})
 }
 
@@ -570,4 +601,92 @@ func exprToString(expr ast.Expr) string {
 	default:
 		return ""
 	}
+}
+
+const BaselineFile = ".go-boost-security.baseline.json"
+
+type Baseline struct {
+	Accepted []BaselineEntry `json:"accepted"`
+}
+
+type BaselineEntry struct {
+	Type    string `json:"type"`
+	File    string `json:"file"`
+	Message string `json:"message"`
+}
+
+func (v SecurityVulnerability) fingerprint() BaselineEntry {
+	return BaselineEntry{Type: v.Type, File: v.File, Message: v.Message}
+}
+
+func LoadBaseline(rootDir string) (*Baseline, error) {
+	data, err := os.ReadFile(filepath.Join(rootDir, BaselineFile))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &Baseline{}, nil
+		}
+		return nil, err
+	}
+
+	var b Baseline
+	if err := json.Unmarshal(data, &b); err != nil {
+		return nil, fmt.Errorf("%s is not valid JSON: %w", BaselineFile, err)
+	}
+	return &b, nil
+}
+
+func WriteBaseline(rootDir string, vulns []SecurityVulnerability) (string, error) {
+	entries := make([]BaselineEntry, 0, len(vulns))
+	seen := map[BaselineEntry]bool{}
+	for _, v := range vulns {
+		fp := v.fingerprint()
+		if seen[fp] {
+			continue
+		}
+		seen[fp] = true
+		entries = append(entries, fp)
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].File != entries[j].File {
+			return entries[i].File < entries[j].File
+		}
+		if entries[i].Type != entries[j].Type {
+			return entries[i].Type < entries[j].Type
+		}
+		return entries[i].Message < entries[j].Message
+	})
+
+	data, err := json.MarshalIndent(Baseline{Accepted: entries}, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	data = append(data, '\n')
+
+	path := filepath.Join(rootDir, BaselineFile)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func ApplyBaseline(vulns []SecurityVulnerability, baseline *Baseline) (remaining []SecurityVulnerability, accepted int) {
+	if baseline == nil || len(baseline.Accepted) == 0 {
+		return vulns, 0
+	}
+
+	known := make(map[BaselineEntry]bool, len(baseline.Accepted))
+	for _, e := range baseline.Accepted {
+		known[e] = true
+	}
+
+	remaining = make([]SecurityVulnerability, 0, len(vulns))
+	for _, v := range vulns {
+		if known[v.fingerprint()] {
+			accepted++
+			continue
+		}
+		remaining = append(remaining, v)
+	}
+	return remaining, accepted
 }

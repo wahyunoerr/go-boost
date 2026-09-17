@@ -1,0 +1,24 @@
+{
+  "accepted": [
+    {
+      "type": "path_traversal",
+      "file": "pkg/detector/layout.go",
+      "message": "File path is built from a dynamic value in os.ReadFile; a caller-controlled value could escape the intended directory"
+    },
+    {
+      "type": "path_traversal",
+      "file": "pkg/generator/generator.go",
+      "message": "File path is built from a dynamic value in os.ReadFile; a caller-controlled value could escape the intended directory"
+    },
+    {
+      "type": "command_injection",
+      "file": "pkg/runner/supervisor.go",
+      "message": "Dynamic binary executable invocation in command call: exec.CommandContext"
+    },
+    {
+      "type": "path_traversal",
+      "file": "pkg/security/scanner.go",
+      "message": "File path is built from a dynamic value in os.ReadFile; a caller-controlled value could escape the intended directory"
+    }
+  ]
+}
