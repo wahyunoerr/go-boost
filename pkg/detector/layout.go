@@ -50,14 +50,14 @@ func DetectLayout(rootDir string) *ProjectLayout {
 	sourceRootSet := map[string]bool{}
 
 	for _, rel := range dirs {
-		segments := strings.Split(rel, string(filepath.Separator))
+		segments := strings.Split(rel, "/")
 		base := strings.ToLower(segments[len(segments)-1])
 
 		if len(segments) == 1 && sourceRootNames[base] {
 			sourceRootSet[rel] = true
 		}
 
-		if migrationDirNames[base] && dirHasFiles(filepath.Join(rootDir, rel), ".sql", ".go") {
+		if migrationDirNames[base] && dirHasFiles(filepath.Join(rootDir, filepath.FromSlash(rel)), ".sql", ".go") {
 			layout.Migrations = append(layout.Migrations, rel)
 		}
 
@@ -73,7 +73,7 @@ func DetectLayout(rootDir string) *ProjectLayout {
 			layout.ConfigDirs = append(layout.ConfigDirs, rel)
 			continue
 		}
-		if !dirHasFiles(filepath.Join(rootDir, rel), ".go") {
+		if !dirHasFiles(filepath.Join(rootDir, filepath.FromSlash(rel)), ".go") {
 			continue
 		}
 
@@ -158,8 +158,8 @@ func detectMainPackages(rootDir string, dirs []string) []string {
 		mains = append(mains, ".")
 	}
 	for _, rel := range dirs {
-		if hasMainPackage(filepath.Join(rootDir, rel)) {
-			mains = append(mains, "./"+filepath.ToSlash(rel))
+		if hasMainPackage(filepath.Join(rootDir, filepath.FromSlash(rel))) {
+			mains = append(mains, "./"+rel)
 		}
 	}
 
@@ -234,7 +234,7 @@ func detectTestStyle(rootDir string, dirs []string) string {
 
 	check(rootDir)
 	for _, rel := range dirs {
-		check(filepath.Join(rootDir, rel))
+		check(filepath.Join(rootDir, filepath.FromSlash(rel)))
 	}
 
 	switch {
@@ -270,7 +270,7 @@ func collectProjectDirs(rootDir string) []string {
 		if strings.Count(rel, string(filepath.Separator)) > 4 {
 			return filepath.SkipDir
 		}
-		dirs = append(dirs, rel)
+		dirs = append(dirs, filepath.ToSlash(rel))
 		return nil
 	})
 

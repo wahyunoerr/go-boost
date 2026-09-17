@@ -117,3 +117,49 @@ func TestRenderBoxAndSave(t *testing.T) {
 		t.Errorf("expected saved file at %s", savedFile)
 	}
 }
+
+func TestAnalyzeCompilerErrorAcceptsWindowsPaths(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		wantFile string
+		wantLine int
+	}{
+		{
+			name:     "unix path",
+			output:   "internal/handler/user.go:42:10: undefined: helper",
+			wantFile: "internal/handler/user.go",
+			wantLine: 42,
+		},
+		{
+			name:     "windows relative path",
+			output:   `internal\handler\user.go:42:10: undefined: helper`,
+			wantFile: `internal\handler\user.go`,
+			wantLine: 42,
+		},
+		{
+			name:     "windows absolute path with drive letter",
+			output:   `C:\projects\app\main.go:7:2: imported and not used: "fmt"`,
+			wantFile: `C:\projects\app\main.go`,
+			wantLine: 7,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			report := AnalyzeErrorOutput(tc.output, "")
+			if report == nil {
+				t.Fatal("expected a diagnostic report")
+			}
+			if report.Category != "Compilation Error" {
+				t.Errorf("category = %q, want Compilation Error", report.Category)
+			}
+			if report.File != tc.wantFile {
+				t.Errorf("file = %q, want %q", report.File, tc.wantFile)
+			}
+			if report.Line != tc.wantLine {
+				t.Errorf("line = %d, want %d", report.Line, tc.wantLine)
+			}
+		})
+	}
+}

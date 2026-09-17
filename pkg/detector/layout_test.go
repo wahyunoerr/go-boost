@@ -3,6 +3,7 @@ package detector
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -192,5 +193,36 @@ func TestDetectLayoutDoesNotTreatEntryPointsAsLayers(t *testing.T) {
 	}
 	if !hasPath(layout.Layers["handler"], "internal/handler") {
 		t.Errorf("real handler directory lost: %v", layout.Layers["handler"])
+	}
+}
+
+func TestDetectLayoutAlwaysReportsForwardSlashPaths(t *testing.T) {
+	dir := buildProject(t, map[string]string{
+		"go.mod":                           "module app\n\ngo 1.22\n",
+		"cmd/api/main.go":                  "package main\n\nfunc main() {}\n",
+		"internal/user/handler/user.go":    "package handler\n",
+		"internal/user/repository/user.go": "package repository\n",
+		"db/migrations/001.sql":            "CREATE TABLE users (id int);",
+		"configs/config.go":                "package configs\n",
+	})
+
+	layout := DetectLayout(dir)
+
+	var all []string
+	all = append(all, layout.MainPackages...)
+	all = append(all, layout.SourceRoots...)
+	all = append(all, layout.Migrations...)
+	all = append(all, layout.ConfigDirs...)
+	for _, paths := range layout.Layers {
+		all = append(all, paths...)
+	}
+
+	if len(all) == 0 {
+		t.Fatal("expected the layout to report some paths")
+	}
+	for _, p := range all {
+		if strings.Contains(p, `\`) {
+			t.Errorf("path %q uses a backslash; guidelines must read the same on every platform", p)
+		}
 	}
 }

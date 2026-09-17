@@ -51,9 +51,9 @@ func CheckConcurrency(rootDir string) ([]ConcurrencyIssue, error) {
 
 func relativeTo(rootDir, path string) string {
 	if rel, err := filepath.Rel(rootDir, path); err == nil {
-		return rel
+		return filepath.ToSlash(rel)
 	}
-	return path
+	return filepath.ToSlash(path)
 }
 
 func sortIssues(issues []ConcurrencyIssue) {
