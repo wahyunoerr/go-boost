@@ -143,6 +143,18 @@ func TestAnalyzeCompilerErrorAcceptsWindowsPaths(t *testing.T) {
 			wantFile: `C:\projects\app\main.go`,
 			wantLine: 7,
 		},
+		{
+			name:     "windows short name with a tilde",
+			output:   `C:\Users\RUNNER~1\AppData\Local\Temp\Test123\001\main.go:4:7: undefined: x`,
+			wantFile: `C:\Users\RUNNER~1\AppData\Local\Temp\Test123\001\main.go`,
+			wantLine: 4,
+		},
+		{
+			name:     "path containing a space",
+			output:   `C:\Program Files\app\main.go:12:1: syntax error`,
+			wantFile: `C:\Program Files\app\main.go`,
+			wantLine: 12,
+		},
 	}
 
 	for _, tc := range tests {
