@@ -89,9 +89,9 @@ func shouldSkipDir(name string) bool {
 
 func relativePath(rootDir, path string) string {
 	if rel, err := filepath.Rel(rootDir, path); err == nil {
-		return rel
+		return filepath.ToSlash(rel)
 	}
-	return path
+	return filepath.ToSlash(path)
 }
 
 type fileScanner struct {
