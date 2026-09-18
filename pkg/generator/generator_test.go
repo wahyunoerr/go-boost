@@ -304,3 +304,46 @@ func TestGuidelinesDescribeTheProjectsRealLayout(t *testing.T) {
 		}
 	}
 }
+
+func TestGeminiConfigIsGeneratedWhereGeminiReadsIt(t *testing.T) {
+	dir, _ := initProject(t, map[string]string{
+		"go.mod": "module example.com/app\n\ngo 1.24\n\ntool github.com/wahyunoerr/go-boost/v2/cmd/go-boost\n",
+	})
+
+	raw := readFile(t, filepath.Join(dir, ".gemini", "settings.json"))
+
+	var config map[string]map[string]map[string]any
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		t.Fatalf("generated Gemini config is not valid JSON: %v", err)
+	}
+
+	entry, ok := config["mcpServers"]["go-boost"]
+	if !ok {
+		t.Fatalf("Gemini reads the mcpServers key, got: %s", raw)
+	}
+	if entry["command"] != "go" {
+		t.Errorf("command = %v, want go", entry["command"])
+	}
+}
+
+func TestGeminiConfigKeepsOtherServers(t *testing.T) {
+	dir, _ := initProject(t, map[string]string{
+		filepath.Join(".gemini", "settings.json"): `{"mcpServers":{"other":{"command":"other-mcp"}},"theme":"dark"}`,
+	})
+
+	var config map[string]any
+	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(dir, ".gemini", "settings.json"))), &config); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if config["theme"] != "dark" {
+		t.Error("an unrelated Gemini setting was lost")
+	}
+	servers := config["mcpServers"].(map[string]any)
+	if _, ok := servers["other"]; !ok {
+		t.Error("an existing MCP server entry was removed")
+	}
+	if _, ok := servers["go-boost"]; !ok {
+		t.Error("go-boost was not added")
+	}
+}
