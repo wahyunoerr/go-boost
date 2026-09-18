@@ -9,13 +9,26 @@
 </p>
 
 <p align="center">
-  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=for-the-badge&logo=go" alt="Go Version"></a>
-  <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-2026%20Ready%20(Dual--Compat%202024--2026)-blueviolet?style=for-the-badge" alt="MCP Specification"></a>
-  <a href="#architecture-and-advantages"><img src="https://img.shields.io/badge/Dependencies-Zero%20External-success?style=for-the-badge" alt="Zero Dependencies"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=for-the-badge" alt="Platform"></a>
+  <a href="https://github.com/wahyunoerr/go-boost/actions/workflows/ci.yml"><img src="https://github.com/wahyunoerr/go-boost/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pkg.go.dev/github.com/wahyunoerr/go-boost/v2"><img src="https://pkg.go.dev/badge/github.com/wahyunoerr/go-boost/v2.svg" alt="Go Reference"></a>
+  <a href="https://goreportcard.com/report/github.com/wahyunoerr/go-boost/v2"><img src="https://goreportcard.com/badge/github.com/wahyunoerr/go-boost/v2" alt="Go Report Card"></a>
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go" alt="Go Version"></a>
+  <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-2024--11--05%20to%202025--11--25-blueviolet" alt="MCP Specification"></a>
+  <a href="#architecture-and-advantages"><img src="https://img.shields.io/badge/dependencies-zero-success" alt="Zero Dependencies"></a>
+  <a href="#requirements"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="Platform"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
 </p>
 
-`go-boost` is a developer acceleration tool and Model Context Protocol (MCP) server built for the Go ecosystem. Engineered natively in Go, it delivers fast, accurate, and safe codebase context to AI coding assistants including Google Antigravity, Cursor, Claude Code, VS Code Copilot, and Windsurf.
+**go-boost is an MCP server for Go.** It gives AI coding assistants structured, accurate context about your Golang codebase, so they stop guessing at your structs, your routes, and your database schema.
+
+Laravel developers have [Laravel Boost](https://laravel.com/docs/13.x/boost). This is the equivalent for Go.
+
+It speaks the [Model Context Protocol](https://modelcontextprotocol.io/) and works with Claude Code, Cursor, GitHub Copilot, Gemini CLI, Google Antigravity, Windsurf, and Zed. It reads your code statically through the Go AST, never executing it, and ships with **zero module dependencies**.
+
+```bash
+go get -tool github.com/wahyunoerr/go-boost/v2/cmd/go-boost@latest
+go tool go-boost init
+```
 
 ---
 
