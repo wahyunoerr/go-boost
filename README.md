@@ -594,21 +594,31 @@ go-boost status
 ## Editor & AI Assistant Setup
 
 ### 1. Google Antigravity and Gemini CLI
-Register the server using the CLI:
+`go-boost init` writes `.gemini/settings.json` for you, which is where Gemini CLI reads project-scoped MCP servers from. Nothing else is needed.
+
+To register it by hand instead, after a project tool install:
+```bash
+gemini mcp add -s project -t stdio go-boost go tool go-boost mcp
+```
+
+Or after a global install:
 ```bash
 gemini mcp add -s project -t stdio go-boost go-boost mcp
 ```
-Or create a configuration at `.gemini/antigravity/mcp/go-boost.json`:
+
+The generated file looks like this:
 ```json
 {
   "mcpServers": {
     "go-boost": {
-      "command": "go-boost",
-      "args": ["mcp"]
+      "command": "go",
+      "args": ["tool", "go-boost", "mcp"]
     }
   }
 }
 ```
+
+Use `-s user` instead of `-s project` to register it globally in `~/.gemini/settings.json`.
 
 ### 2. Cursor
 Running `go-boost init` automatically generates `.cursor/mcp.json` and `.cursorrules`.

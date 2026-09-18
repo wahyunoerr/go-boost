@@ -47,6 +47,9 @@ func GenerateProjectArtifacts(rootDir string, binaryPath string) (*InitResult, e
 	if err := mergeMCPConfig(filepath.Join(rootDir, ".vscode", "mcp.json"), "servers", invocation, result); err != nil {
 		return nil, err
 	}
+	if err := mergeMCPConfig(filepath.Join(rootDir, ".gemini", "settings.json"), "mcpServers", invocation, result); err != nil {
+		return nil, err
+	}
 
 	guidelines := GenerateAgentsMD(stack)
 	if err := writeManagedBlock(filepath.Join(rootDir, "AGENTS.md"), guidelines, guidelineBeginMarker, guidelineEndMarker, result); err != nil {

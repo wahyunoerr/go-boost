@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	Version = "2.2.0"
+	Version = "2.3.0"
 	Banner  = `
    ____ _       ____                  _   
   / ___/___    | __ )  ___   ___  ___| |_ 
@@ -775,7 +775,7 @@ func formatSARIF(vulns []security.SecurityVulnerability) string {
 
 	var report SarifReport
 	report.Schema = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
-	report.Version = "2.2.0"
+	report.Version = "2.3.0"
 	report.Runs = []struct {
 		Tool struct {
 			Driver struct {
