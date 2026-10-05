@@ -1,3 +1,5 @@
+// Package security scans Go source for credentials, injection, and unsafe
+// configuration without executing the code it inspects.
 package security
 
 import (
@@ -14,6 +16,8 @@ import (
 	"strings"
 )
 
+// SecurityVulnerability is one finding, located by a repository relative path
+// and a line number so an editor can jump straight to it.
 type SecurityVulnerability struct {
 	Type        string `json:"type"`
 	Severity    string `json:"severity"`
@@ -38,6 +42,10 @@ var (
 	}
 )
 
+// ScanCodebase walks rootDir and reports every finding in its Go source,
+// skipping vendored, generated, and test files. A file that fails to parse is
+// reported rather than passed over, so a syntax error cannot be mistaken for a
+// clean result.
 func ScanCodebase(rootDir string) ([]SecurityVulnerability, error) {
 	fset := token.NewFileSet()
 	var vulns []SecurityVulnerability
@@ -603,12 +611,17 @@ func exprToString(expr ast.Expr) string {
 	}
 }
 
+// BaselineFile is the name of the file holding findings a project has accepted.
 const BaselineFile = ".go-boost-security.baseline.json"
 
+// Baseline is the set of findings a project has chosen to accept, so an
+// existing codebase can adopt the scanner without fixing everything first.
 type Baseline struct {
 	Accepted []BaselineEntry `json:"accepted"`
 }
 
+// BaselineEntry identifies an accepted finding by type, file, and message,
+// which keeps it matched after the code around it moves to a different line.
 type BaselineEntry struct {
 	Type    string `json:"type"`
 	File    string `json:"file"`
@@ -619,6 +632,8 @@ func (v SecurityVulnerability) fingerprint() BaselineEntry {
 	return BaselineEntry{Type: v.Type, File: v.File, Message: v.Message}
 }
 
+// LoadBaseline reads the baseline from rootDir. A missing file yields an empty
+// baseline rather than an error, so a project without one still scans.
 func LoadBaseline(rootDir string) (*Baseline, error) {
 	data, err := os.ReadFile(filepath.Join(rootDir, BaselineFile))
 	if err != nil {
@@ -635,6 +650,8 @@ func LoadBaseline(rootDir string) (*Baseline, error) {
 	return &b, nil
 }
 
+// WriteBaseline records vulns as accepted and returns the path it wrote.
+// Entries are deduplicated and sorted so the file stays stable across runs.
 func WriteBaseline(rootDir string, vulns []SecurityVulnerability) (string, error) {
 	entries := make([]BaselineEntry, 0, len(vulns))
 	seen := map[BaselineEntry]bool{}
@@ -670,6 +687,9 @@ func WriteBaseline(rootDir string, vulns []SecurityVulnerability) (string, error
 	return path, nil
 }
 
+// ApplyBaseline splits vulns into those the baseline accepts and those it does
+// not. A finding absent from the baseline is always returned, so recording a
+// baseline can never hide something new.
 func ApplyBaseline(vulns []SecurityVulnerability, baseline *Baseline) (remaining []SecurityVulnerability, accepted int) {
 	if baseline == nil || len(baseline.Accepted) == 0 {
 		return vulns, 0
