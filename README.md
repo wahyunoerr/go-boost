@@ -659,30 +659,39 @@ claude mcp add -s local -t stdio go-boost go-boost mcp
 Reload the VS Code window (`Developer: Reload Window`) to discover the tools.
 
 ### 5. Windsurf
-Add this block to your Windsurf configuration (`~/.codeium/windsurf/mcp_config.json`):
+Windsurf reads MCP servers from a single file in your home directory rather than from the project, so `go-boost init` does not write it. Add the block yourself to `~/.codeium/windsurf/mcp_config.json`.
+
+After a project tool install:
 ```json
 {
   "mcpServers": {
     "go-boost": {
-      "command": "go-boost",
-      "args": ["mcp"]
+      "command": "go",
+      "args": ["tool", "go-boost", "mcp"]
     }
   }
 }
 ```
 
+After a global install, use `"command": "go-boost"` with `"args": ["mcp"]`. Because this file is global, the project tool form only works for projects that declare the tool directive.
+
 ### 6. Zed Editor
-Add this block to `.zed/settings.json`:
+Open the Zed settings file with the `zed: open settings file` command and add a `context_servers` entry. `go-boost init` does not write this one, because Zed documents MCP servers in the user settings file rather than a project file.
+
+After a project tool install:
 ```json
 {
   "context_servers": {
     "go-boost": {
-      "command": "go-boost",
-      "args": ["mcp"]
+      "command": "go",
+      "args": ["tool", "go-boost", "mcp"],
+      "env": {}
     }
   }
 }
 ```
+
+After a global install, use `"command": "go-boost"` with `"args": ["mcp"]`.
 
 ---
 
