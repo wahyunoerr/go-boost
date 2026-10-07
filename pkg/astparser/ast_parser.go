@@ -1,3 +1,6 @@
+// Package astparser reads Go source through the standard library AST. It never
+// compiles or executes the code it inspects, so it is safe to point at any
+// project, including one that does not build.
 package astparser
 
 import (
@@ -14,6 +17,8 @@ import (
 	"sync"
 )
 
+// StructInfo describes one struct declaration, including the methods declared
+// on it anywhere in its package.
 type StructInfo struct {
 	Name       string      `json:"name"`
 	Package    string      `json:"package,omitempty"`
@@ -25,6 +30,8 @@ type StructInfo struct {
 	Methods    []string    `json:"methods,omitempty"`
 }
 
+// FieldInfo is a single struct field. ParsedTags holds the tags go-boost
+// understands, already split out of the raw tag string.
 type FieldInfo struct {
 	Name       string            `json:"name"`
 	Type       string            `json:"type"`
@@ -34,6 +41,7 @@ type FieldInfo struct {
 	Embedded   bool              `json:"embedded,omitempty"`
 }
 
+// InterfaceInfo describes one interface declaration and its method set.
 type InterfaceInfo struct {
 	Name       string            `json:"name"`
 	Package    string            `json:"package,omitempty"`
@@ -45,6 +53,8 @@ type InterfaceInfo struct {
 	Methods    []InterfaceMethod `json:"methods"`
 }
 
+// InterfaceMethod is one method in an interface, with parameter and result
+// types rendered back to source form.
 type InterfaceMethod struct {
 	Name    string   `json:"name"`
 	Params  []string `json:"params"`
@@ -56,12 +66,16 @@ type InterfaceMethod struct {
 	Variadic   bool     `json:"variadic,omitempty"`
 }
 
+// PackageSymbols holds every struct and interface found under a path.
 type PackageSymbols struct {
 	Package    string          `json:"package"`
 	Structs    []StructInfo    `json:"structs"`
 	Interfaces []InterfaceInfo `json:"interfaces"`
 }
 
+// ParsePath parses a single Go file or every file under a directory and returns
+// the structs and interfaces it declares. Generated and test files are skipped,
+// and results are ordered so repeated calls return the same output.
 func ParsePath(targetPath string) (*PackageSymbols, error) {
 	symbols := &PackageSymbols{
 		Structs:    make([]StructInfo, 0),

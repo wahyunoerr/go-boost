@@ -10,6 +10,8 @@ import (
 	"github.com/wahyunoerr/go-boost/v2/pkg/runner"
 )
 
+// RegisterAllResources registers the project metadata, routes, schema and
+// diagnostics resources, each read fresh when a client asks for it.
 func RegisterAllResources(s *Server, rootDir string) {
 	s.RegisterResource(Resource{
 		URI:         "project://metadata",

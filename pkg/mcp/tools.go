@@ -106,6 +106,9 @@ func hasMakeTarget(makefilePath, target string) bool {
 	return false
 }
 
+// DetectMainEntry returns the package path most likely to be the application
+// entry point, preferring the first directory under cmd and falling back to the
+// module root.
 func DetectMainEntry(rootDir string) string {
 	cmdDir := filepath.Join(rootDir, "cmd")
 	if entries, err := os.ReadDir(cmdDir); err == nil {
@@ -150,6 +153,9 @@ func tailOutput(out string) string {
 	return fmt.Sprintf("... [truncated %d earlier bytes]\n%s", len(out)-len(tail), tail)
 }
 
+// RegisterAllTools registers every go-boost tool against rootDir. Arguments that
+// would reach a go subcommand are validated first, because go test, go vet and
+// go doc all accept flags that execute an arbitrary binary.
 func RegisterAllTools(s *Server, rootDir string) {
 	s.RegisterTool(Tool{
 		Name:        "app_info",
@@ -861,6 +867,8 @@ type projectCompletionSource struct {
 	rootDir string
 }
 
+// NewCompletionSource answers completion requests from the project's own
+// database connections and interface names.
 func NewCompletionSource(rootDir string) CompletionSource {
 	return &projectCompletionSource{rootDir: rootDir}
 }

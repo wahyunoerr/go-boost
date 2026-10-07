@@ -9,6 +9,9 @@ import (
 	"strings"
 )
 
+// ImplementationMatch records how completely one struct satisfies an interface.
+// MissingMethods names what is still absent, so a partial match is visible
+// rather than silently dropped.
 type ImplementationMatch struct {
 	StructName     string   `json:"struct_name"`
 	Package        string   `json:"package,omitempty"`
@@ -19,6 +22,8 @@ type ImplementationMatch struct {
 	IsComplete     bool     `json:"is_complete"`
 }
 
+// MethodSignature is a method name with its parameter and result types, used to
+// compare a struct's method set against an interface.
 type MethodSignature struct {
 	Name      string
 	Params    []string
@@ -36,6 +41,10 @@ type typeLocation struct {
 	Line int
 }
 
+// FindImplementations computes method sets across the project and reports which
+// structs satisfy interfaceName. Symbols are matched per package, so two types
+// sharing a name in different packages are not confused. Methods promoted from
+// embedded types and from embedded interfaces are both taken into account.
 func FindImplementations(rootDir string, interfaceName string) ([]ImplementationMatch, error) {
 	files, err := collectGoFiles(rootDir)
 	if err != nil {
