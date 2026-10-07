@@ -9,6 +9,7 @@ import (
 	"unicode"
 )
 
+// UnusedSymbol is a declaration that nothing in its package references.
 type UnusedSymbol struct {
 	Name     string `json:"name"`
 	Kind     string `json:"kind"`
@@ -23,6 +24,11 @@ type declaration struct {
 	key    typeKey
 }
 
+// DetectDeadCode reports functions, structs and interfaces that no file in
+// their own package references. References are counted per package, and a name
+// used only as a struct field or map key does not count as a use. This is a
+// heuristic rather than a call graph, so exported API in a library will be
+// reported even when callers exist outside the module.
 func DetectDeadCode(rootDir string) ([]UnusedSymbol, error) {
 	files, err := collectAllGoFiles(rootDir)
 	if err != nil {

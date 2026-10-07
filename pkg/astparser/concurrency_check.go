@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+// ConcurrencyIssue is one concurrency hazard with the location that triggered
+// it and the change that resolves it.
 type ConcurrencyIssue struct {
 	Type        string `json:"type"`
 	Severity    string `json:"severity"`
@@ -18,6 +20,9 @@ type ConcurrencyIssue struct {
 	Remediation string `json:"remediation"`
 }
 
+// CheckConcurrency reports mutexes left locked on a path out of the function,
+// cancel functions that are never called, and goroutines started in a loop with
+// nothing waiting on them.
 func CheckConcurrency(rootDir string) ([]ConcurrencyIssue, error) {
 	fset := token.NewFileSet()
 	issues := make([]ConcurrencyIssue, 0)

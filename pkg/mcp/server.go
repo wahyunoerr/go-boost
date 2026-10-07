@@ -19,12 +19,19 @@ const (
 	maxConcurrentCalls = 8
 )
 
+// ToolHandler runs one tool call. Returning an error is reported to the model
+// as a failed call rather than ending the session.
 type ToolHandler func(ctx context.Context, args map[string]any) (*CallToolResult, error)
 
+// PromptHandler renders one prompt.
 type PromptHandler func(ctx context.Context, args map[string]string) (*GetPromptResult, error)
 
+// ResourceHandler reads one resource by URI.
 type ResourceHandler func(ctx context.Context, uri string) (*ReadResourceResult, error)
 
+// Server speaks MCP over a reader and writer, by default stdin and stdout.
+// Nothing but JSON-RPC is ever written to the output, so logs go to the logger
+// instead and cannot corrupt the stream.
 type Server struct {
 	name         string
 	version      string
@@ -54,13 +61,17 @@ type Server struct {
 	completionSource CompletionSource
 }
 
+// CompletionSource supplies argument suggestions drawn from the project itself
+// rather than a fixed list.
 type CompletionSource interface {
 	Connections() []string
 	Interfaces() []string
 }
 
+// Option configures a Server at construction.
 type Option func(*Server)
 
+// WithIO replaces the default stdin and stdout, which is what tests use.
 func WithIO(in io.Reader, out io.Writer) Option {
 	return func(s *Server) {
 		s.in = in
@@ -68,24 +79,29 @@ func WithIO(in io.Reader, out io.Writer) Option {
 	}
 }
 
+// WithLogger replaces the default stderr logger.
 func WithLogger(logger *log.Logger) Option {
 	return func(s *Server) {
 		s.logger = logger
 	}
 }
 
+// WithInstructions sets the text returned to the client at initialization.
 func WithInstructions(instructions string) Option {
 	return func(s *Server) {
 		s.instructions = instructions
 	}
 }
 
+// WithCompletionSource makes argument completion answer from the project.
 func WithCompletionSource(source CompletionSource) Option {
 	return func(s *Server) {
 		s.completionSource = source
 	}
 }
 
+// NewServer builds a server that reads stdin and writes stdout unless an option
+// says otherwise.
 func NewServer(name, version string, opts ...Option) *Server {
 	s := &Server{
 		name:             name,

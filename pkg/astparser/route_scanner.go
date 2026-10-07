@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+// RouteInfo is one registered HTTP endpoint with the handler bound to it and
+// the file and line that registered it.
 type RouteInfo struct {
 	Framework   string   `json:"framework"`
 	Method      string   `json:"method"`
@@ -30,6 +32,10 @@ var routerTypeHints = []string{
 	"chi.Router", "chi.Mux", "mux.Router", "http.ServeMux",
 }
 
+// ScanRoutes finds endpoints registered with Gin, Echo, Fiber, Chi, gorilla/mux
+// and the net/http 1.22 pattern syntax. Group prefixes are resolved across
+// functions, so a route registered inside a helper still reports the full path
+// its caller gave it.
 func ScanRoutes(rootDir string) ([]RouteInfo, error) {
 	files, err := collectGoFiles(rootDir)
 	if err != nil {

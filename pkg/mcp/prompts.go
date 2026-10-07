@@ -5,6 +5,7 @@ import (
 	"fmt"
 )
 
+// RegisterAllPrompts registers the built-in prompt templates.
 func RegisterAllPrompts(s *Server) {
 	s.RegisterPrompt(Prompt{
 		Name:        "generate_table_tests",
