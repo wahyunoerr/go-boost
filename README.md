@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://www.agensi.io/skills/go-boost"><img src="https://img.shields.io/badge/Agensi.io-Go--Boost%20Pro%20Skill-7C3AED?logo=sparkpost&logoColor=white" alt="Agensi.io Go-Boost Pro Skill"></a>
   <a href="https://github.com/wahyunoerr/go-boost/actions/workflows/ci.yml"><img src="https://github.com/wahyunoerr/go-boost/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://pkg.go.dev/github.com/wahyunoerr/go-boost/v2"><img src="https://pkg.go.dev/badge/github.com/wahyunoerr/go-boost/v2.svg" alt="Go Reference"></a>
   <a href="https://goreportcard.com/report/github.com/wahyunoerr/go-boost/v2"><img src="https://goreportcard.com/badge/github.com/wahyunoerr/go-boost/v2" alt="Go Report Card"></a>
@@ -25,9 +26,25 @@ Laravel developers have [Laravel Boost](https://laravel.com/docs/13.x/boost). Th
 
 It speaks the [Model Context Protocol](https://modelcontextprotocol.io/) and works with Claude Code, Cursor, GitHub Copilot, Gemini CLI, Google Antigravity, Windsurf, and Zed. It reads your code statically through the Go AST, never executing it, and ships with **zero module dependencies**.
 
+> ### Official Agent Skill Suite on Agensi.io
+> This repository provides the **base MCP server binary** (`stdio` engine). The commercial **Go Boost Pro Agent Skill Suite** (containing the `SKILL.md` multi tool orchestration protocol, **Concurrency & Race Patterns Playbook**, **Database & Migration Safety Playbook**, **Hexagonal & Clean Architecture Playbook**, and verified refactoring workflows) is **not included in this repository** and is available exclusively on **[Agensi.io (Go Boost)](https://www.agensi.io/skills/go-boost)**.
+>
+> | Component | Base CLI & MCP Binary (This Repo) | [Go Boost Pro Skill on Agensi.io](https://www.agensi.io/skills/go-boost) |
+> | :--- | :---: | :---: |
+> | 21 Native Go AST & DB MCP Tools (`stdio` engine) | Included | Required Base Engine |
+> | Baseline `AGENTS.md` / `CLAUDE.md` Config Generator | Included | Included |
+> | **Principal Level `SKILL.md` 21 Tool Orchestration Protocol** | Not Included | **Included** |
+> | **Concurrency, Goroutine Leak & Mutex Audit Playbook** | Not Included | **Included** |
+> | **Live Database Schema Sync & Safe Migration Playbook** | Not Included | **Included** |
+> | **Hexagonal, Clean Architecture & Interface Refactoring Playbook** | Not Included | **Included** |
+
 ```bash
+# 1. Install the base MCP server binary
 go get -tool github.com/wahyunoerr/go-boost/v2/cmd/go-boost@latest
 go tool go-boost init
+
+# 2. Get the Go Boost Pro Agent Skill Suite
+#    https://www.agensi.io/skills/go-boost
 ```
 
 ---
@@ -884,13 +901,13 @@ Stored in `AGENTS.md`, `CLAUDE.md`, and `.cursorrules`. Covers baseline rules:
 - Idiomatic Go naming conventions.
 - Calling `app_info` and `ast_inspect` at the start of tasks.
 
-### 2. Skills (Loaded On-Demand)
-Official **Go-Boost Pro** Agent Skills for Claude Code, Cursor, Copilot, and 20+ other coding agents are available on [Agensi.io](https://www.agensi.io).
+### 2. Skills (Loaded On Demand)
+Official **Go Boost Pro** Agent Skills (`SKILL.md` 21 tool orchestration + Concurrency, Database Migration, and Hexagonal Architecture reference playbooks) for Claude Code, Cursor, Copilot, Antigravity, and 20+ coding agents are available exclusively on **[Agensi.io (Go Boost)](https://www.agensi.io/skills/go-boost)**.
 
-To install local or licensed skills into `.claude/skills/{skill-name}/SKILL.md` in the [Agent Skills format](https://agentskills.io/what-are-skills), place each skill in `.ai/skills/{skill-name}/SKILL.md` with `name` and `description` frontmatter and run `go-boost init` or `go-boost update`.
+After purchasing from [Agensi.io](https://www.agensi.io/skills/go-boost), place the skill folder inside `.claude/skills/` (or `.ai/skills/` and run `go-boost init` / `go-boost update`).
 
 ---
 
 ## License
 
-This project is licensed under the MIT License. You are free to use it for both commercial and open-source projects.
+The `go-boost` CLI and MCP server binary in this repository are licensed under the [MIT License](LICENSE). The **Go Boost Pro Agent Skill Suite** (`SKILL.md` orchestration protocol and architecture playbooks) is licensed separately as a commercial product on **[Agensi.io](https://www.agensi.io/skills/go-boost)**.
