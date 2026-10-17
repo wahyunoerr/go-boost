@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 850 180" width="100%" height="180">
+  <defs>
+    <linearGradient id="gopherCyan" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00D2FF" />
+      <stop offset="50%" stop-color="#00ADD8" />
+      <stop offset="100%" stop-color="#007D9C" />
+    </linearGradient>
+    <linearGradient id="boostOrange" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF6B4A" />
+      <stop offset="100%" stop-color="#FF3366" />
+    </linearGradient>
+    <linearGradient id="textGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#E2E8F0" />
+    </linearGradient>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B132B" />
+      <stop offset="100%" stop-color="#1C2541" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Background Card -->
+  <rect width="850" height="180" rx="20" fill="url(#bgGrad)" stroke="#1F3160" stroke-width="2" />
+
+  <!-- Subtle Circuit Lines -->
+  <g stroke="#00ADD8" stroke-width="1.2" opacity="0.25" fill="none">
+    <path d="M 30 90 L 80 90 L 100 60 L 140 60" />
+    <circle cx="140" cy="60" r="3" fill="#00ADD8" />
+    <path d="M 50 130 L 100 130 L 120 150 L 180 150" />
+    <circle cx="180" cy="150" r="3" fill="#00ADD8" />
+    <path d="M 720 40 L 760 40 L 780 70 L 820 70" />
+    <circle cx="720" cy="40" r="3" fill="#00ADD8" />
+    <path d="M 680 140 L 730 140 L 750 110 L 810 110" />
+    <circle cx="810" cy="110" r="3" fill="#00ADD8" />
+  </g>
+
+  <!-- Logo Emblem: Rocket Boost + Go Speed Nodes -->
+  <g transform="translate(45, 25)">
+    <!-- Speed Rings / Outer Glow -->
+    <circle cx="65" cy="65" r="56" fill="none" stroke="#00ADD8" stroke-width="2" stroke-dasharray="8 6" opacity="0.4" />
+    <circle cx="65" cy="65" r="48" fill="#0A192F" stroke="url(#gopherCyan)" stroke-width="3" filter="url(#glow)" />
+    
+    <!-- Rocket Flame -->
+    <path d="M 55 92 Q 65 118 65 118 Q 65 118 75 92 Z" fill="url(#boostOrange)" opacity="0.9" />
+    <path d="M 60 92 Q 65 108 65 108 Q 65 108 70 92 Z" fill="#FFE600" />
+
+    <!-- Rocket Body -->
+    <path d="M 65 26 C 53 45 48 70 48 85 L 56 85 L 59 78 L 71 78 L 74 85 L 82 85 C 82 70 77 45 65 26 Z" fill="url(#gopherCyan)" />
+    
+    <!-- Rocket Window -->
+    <circle cx="65" cy="54" r="7" fill="#0A192F" stroke="#FFFFFF" stroke-width="2" />
+    <circle cx="67" cy="52" r="2.5" fill="#FFFFFF" opacity="0.8" />
+    
+    <!-- Left & Right Fins -->
+    <path d="M 48 72 L 36 84 L 48 84 Z" fill="#007D9C" />
+    <path d="M 82 72 L 94 84 L 82 84 Z" fill="#007D9C" />
+  </g>
+
+  <!-- Typography -->
+  <!-- "go-" in Go Cyan -->
+  <text x="195" y="98" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="64" font-weight="900" fill="url(#gopherCyan)" letter-spacing="-1.5">go-</text>
+  
+  <!-- "boost" in White with Subtle Gradient -->
+  <text x="300" y="98" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="64" font-weight="900" fill="url(#textGrad)" letter-spacing="-1.5">boost</text>
+
+  <!-- Tagline Badge -->
+  <rect x="195" y="118" width="130" height="24" rx="6" fill="#00ADD8" fill-opacity="0.15" stroke="#00ADD8" stroke-width="1" />
+  <text x="203" y="134" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="800" fill="#00D2FF" letter-spacing="1.5">MCP 2026 READY</text>
+
+  <text x="340" y="135" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="500" fill="#94A3B8" letter-spacing="0.2">AI Acceleration &amp; Model Context Protocol Suite for Go</text>
+</svg>
