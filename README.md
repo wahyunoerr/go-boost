@@ -26,26 +26,19 @@ Laravel developers have [Laravel Boost](https://laravel.com/docs/13.x/boost). Th
 
 It speaks the [Model Context Protocol](https://modelcontextprotocol.io/) and works with Claude Code, Cursor, GitHub Copilot, Gemini CLI, Google Antigravity, Windsurf, and Zed. It reads your code statically through the Go AST, never executing it, and ships with **zero module dependencies**.
 
-> ### Official Agent Skill Suite on Agensi.io
-> This repository provides the **base MCP server binary** (`stdio` engine). The commercial **Go Boost Pro Agent Skill Suite** (containing the `SKILL.md` multi tool orchestration protocol, **Concurrency & Race Patterns Playbook**, **Database & Migration Safety Playbook**, **Hexagonal & Clean Architecture Playbook**, and verified refactoring workflows) is **not included in this repository** and is available exclusively on **[Agensi.io (Go Boost)](https://www.agensi.io/skills/go-boost)**.
->
-> | Component | Base CLI & MCP Binary (This Repo) | [Go Boost Pro Skill on Agensi.io](https://www.agensi.io/skills/go-boost) |
-> | :--- | :---: | :---: |
-> | 21 Native Go AST & DB MCP Tools (`stdio` engine) | Included | Required Base Engine |
-> | Baseline `AGENTS.md` / `CLAUDE.md` Config Generator | Included | Included |
-> | **Principal Level `SKILL.md` 21 Tool Orchestration Protocol** | Not Included | **Included** |
-> | **Concurrency, Goroutine Leak & Mutex Audit Playbook** | Not Included | **Included** |
-> | **Live Database Schema Sync & Safe Migration Playbook** | Not Included | **Included** |
-> | **Hexagonal, Clean Architecture & Interface Refactoring Playbook** | Not Included | **Included** |
-
 ```bash
-# 1. Install the base MCP server binary
+# 1. Install the MCP server binary (zero dependencies)
 go get -tool github.com/wahyunoerr/go-boost/v2/cmd/go-boost@latest
-go tool go-boost init
 
-# 2. Get the Go Boost Pro Agent Skill Suite
-#    https://www.agensi.io/skills/go-boost
+# 2. Configure your AI coding assistant (Cursor, Claude Code, Copilot, Antigravity)
+go tool go-boost init
 ```
+
+> ⭐ **Support Open Source:** If `go-boost` accelerates your Go development workflow, please give it a star on GitHub to help other Go developers discover it!
+
+> [!TIP]
+> ### Go Boost Pro Agent Skill Suite ($9.99 on Agensi.io)
+> The open source binary gives you all 21 native MCP tools. For teams wanting autonomous multi tool agent orchestration without manual prompt tuning, the commercial **Go Boost Pro Agent Skill Suite** provides the verified `SKILL.md` orchestration protocol, Concurrency Audit Playbook, Live Database Migration Safety Playbook, and Hexagonal Refactoring Playbook. Available on **[Agensi.io (Go Boost)](https://www.agensi.io/skills/go-boost)**.
 
 ---
 

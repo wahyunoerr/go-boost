@@ -431,7 +431,7 @@ func TestAllToolsExecuteWithoutLicenseGate(t *testing.T) {
 		t.Fatalf("write go.mod: %v", err)
 	}
 
-	srv := NewServer("test", "2.4.1")
+	srv := NewServer("test", "2.4.2")
 	RegisterAllTools(srv, dir)
 
 	// Both baseline and advanced tools must succeed directly without license activation.

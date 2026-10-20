@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	Version = "2.4.1"
+	Version = "2.4.2"
 	Banner  = `
    ____ _       ____                  _   
   / ___/___    | __ )  ___   ___  ___| |_ 
@@ -238,6 +238,10 @@ func runInit() int {
 	fmt.Println("  - Antigravity    : In chat, run MCP tool 'app_info' to connect.")
 	fmt.Println("  - VS Code Copilot: Reload window; .vscode/mcp.json is configured.")
 	fmt.Println("\n🚀 Run 'go-boost status' anytime to inspect project health.")
+	fmt.Println("\n⭐ If go-boost accelerates your Go AI workflow, please star on GitHub:")
+	fmt.Println("   https://github.com/wahyunoerr/go-boost")
+	fmt.Println("\n🧠 Want autonomous multi-tool orchestration without prompt tuning? ($9.99):")
+	fmt.Println("   https://www.agensi.io/skills/go-boost")
 	return exitOK
 }
 
